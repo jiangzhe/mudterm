@@ -1,0 +1,45 @@
+[package]
+name = "mudterm"
+version = "0.1.0"
+authors = ["Zhe Jiang <nju.jiangzhe@gmail.com>"]
+edition = "2018"
+
+[[bin]]
+name = "mudterm"
+path = "src/bin/mudterm.rs"
+
+[[bin]]
+name = "mudsrv"
+path = "src/bin/mudsrv.rs"
+
+[[bin]]
+name = "mudcli"
+path = "src/bin/mudcli.rs"
+
+[dependencies]
+tui = "0.12"
+termion = "1.5"
+rusqlite = "0.24"
+libtelnet-rs = "1.1"
+encoding = "0.2"
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.8"
+rlua = "0.17"
+crossbeam-channel = "0.5"
+lazy_static = "1.4"
+ansi-parser = "0.7"
+signal-hook = "0.1"
+libc = "0.2"
+unicode-width = "0.1"
+# quick-xml = { version = "0.20", features = [ "encoding", "serialize" ] }
+serde = { version = "1.0", features = [ "derive" ] }
+regex = "1.4"
+gag = "0.1"
+serde_yaml = "0.8.14"
+serde_json = "1.0"
+rust-crypto = "0.2"
+rand = "0.7"
+byteorder = "1.3"
+toml = "0.5"
+structopt = "0.3"
