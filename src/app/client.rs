@@ -1,7 +1,7 @@
 use crate::error::Result;
 use crate::protocol::Packet;
 use crate::signal;
-use crate::style::{err_line, StyledLine};
+use crate::style::StyledLine;
 use crate::ui::{RawScreen, RawScreenCallback, RawScreenInput};
 use crate::userinput;
 use crossbeam_channel::{unbounded, Sender};
@@ -30,7 +30,7 @@ impl Client {
                 Ok(sm) => {
                     if let Err(e) = Packet::from(sm).write_to(&mut to_server) {
                         eprintln!("failed to send packet to server {}", e);
-                        uitx.send(RawScreenInput::Line(err_line(
+                        uitx.send(RawScreenInput::Line(StyledLine::err(
                             "无法向服务器发送信息，请尝试关闭应用并重新连接".to_owned(),
                         )))
                         .unwrap();
@@ -48,7 +48,7 @@ impl Client {
             match Packet::read_from(&mut from_server) {
                 Err(e) => {
                     eprintln!("failed reading packet from server {}", e);
-                    uitx.send(RawScreenInput::Line(err_line(
+                    uitx.send(RawScreenInput::Line(StyledLine::err(
                         "无法从服务器接收信息，请尝试关闭应用并重新连接".to_owned(),
                     )))
                     .unwrap();

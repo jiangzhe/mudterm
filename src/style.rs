@@ -44,10 +44,19 @@ impl StyledLine {
         }
     }
 
-    pub fn raw_line(line: String) -> Self {
+    pub fn raw(line: String) -> Self {
         Self {
             spans: vec![Span::raw(line.to_owned())],
             orig: line,
+            ended: true,
+        }
+    }
+
+    pub fn err(s: String) -> StyledLine {
+        let style = Style::default().add_modifier(Modifier::REVERSED);
+        StyledLine {
+            spans: vec![Span::styled(s.to_owned(), style)],
+            orig: s,
             ended: true,
         }
     }
@@ -319,18 +328,6 @@ impl CJKStringAdapter {
 
     pub fn into_origin_and_extended(self) -> (String, String) {
         (self.os, self.es)
-    }
-}
-
-pub fn err_style() -> Style {
-    Style::default().add_modifier(Modifier::REVERSED)
-}
-
-pub fn err_line(s: String) -> StyledLine {
-    StyledLine {
-        spans: vec![Span::styled(s.to_owned(), err_style())],
-        orig: s,
-        ended: true,
     }
 }
 

@@ -1,35 +1,10 @@
 use serde::{Deserialize, Serialize};
 use structopt::StructOpt;
-// #[derive(Debug, Clone)]
-// pub struct Config {
-//     pub world_addr: String,
-//     pub max_lines: usize,
-//     pub server_log_file: String,
-//     pub server_log_ansi: bool,
-//     pub debug_log_file: String,
-//     pub triggers_file: String,
-//     pub echo_command: bool,
-//     // pub log_command: bool,
-// }
-
-// impl Default for Config {
-//     fn default() -> Self {
-//         Self{
-//             world_addr: String::from("mud.pkuxkx.net"),
-//             max_lines: 5000,
-//             server_log_file: String::from("server.log"),
-//             server_log_ansi: true,
-//             debug_log_file: String::from("debug.log"),
-//             triggers_file: String::from("triggers.xml"),
-//             echo_command: true,
-//             // log_command: false,
-//         }
-//     }
-// }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub mode: Mode,
     pub world: World,
     pub server: Server,
     pub client: Client,
@@ -114,8 +89,25 @@ pub struct CmdOpts {
     pub conf_file: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum Mode {
+    #[serde(rename = "standalone")]
+    Standalone,
+    #[serde(rename = "server")]
+    Server,
+    #[serde(rename = "client")]
+    Client,
+}
+
+impl Default for Mode {
+    fn default() -> Self {
+        Self::Standalone
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[test]
     fn test_toml_deserialize_char() {
@@ -123,5 +115,12 @@ mod tests {
         m.insert(String::from("a"), ';');
         let s = toml::to_string(&m).unwrap();
         println!("{}", s);
+    }
+
+    #[test]
+    fn test_toml_serialize_enum() {
+        let m = Mode::Standalone;
+        let s = toml::to_string(&m).unwrap();
+        println!("{}", s);    
     }
 }

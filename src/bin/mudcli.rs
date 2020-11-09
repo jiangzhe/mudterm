@@ -4,7 +4,7 @@ use mudterm::app::client::{Client, ClientCallback};
 use mudterm::auth;
 use mudterm::conf::{CmdOpts, Config};
 use mudterm::error::{Error, Result};
-use mudterm::ui::{render_ui, RawScreen};
+use mudterm::ui::{init_terminal, RawScreen};
 use std::fs::File;
 use std::io::Read;
 use std::net::TcpStream;
@@ -41,18 +41,30 @@ fn main() -> Result<()> {
     };
 
     // create client app
-    let term = RawScreen::new(config.term);
+    let mut screen = RawScreen::new(config.term);
+
     let (uitx, uirx) = unbounded();
 
-    let mut app = Client::new(uitx);
+    // todo: init script
 
-    app.start_from_server_handle(from_server);
+    let mut client = Client::new(uitx);
 
-    let srvtx = app.start_to_server_handle(to_server)?;
+    client.start_from_server_handle(from_server);
 
-    app.start_signal_handle();
+    let srvtx = client.start_to_server_handle(to_server)?;
 
-    app.start_userinput_handle();
+    client.start_signal_handle();
 
-    render_ui(term, uirx, ClientCallback::new(srvtx))
+    client.start_userinput_handle();
+
+    let mut terminal = init_terminal()?;
+    
+    let mut cb = ClientCallback::new(srvtx);
+    
+    loop {
+        if screen.render(&mut terminal, &uirx, &mut cb)? {
+            break;
+        }
+    }
+    Ok(())
 }

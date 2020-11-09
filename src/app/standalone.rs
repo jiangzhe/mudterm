@@ -6,9 +6,9 @@ use crate::runtime::script::Script;
 use crate::runtime::trigger::CompiledTrigger;
 use crate::runtime::{self, Target};
 use crate::signal;
-use crate::style::{err_line, StyleReflector, StyledLine};
+use crate::style::{StyleReflector, StyledLine};
 use crate::transport::{Inbound, InboundMessage, Outbound};
-use crate::ui::{render_ui, RawScreen, RawScreenCallback, RawScreenInput};
+use crate::ui::{init_terminal, RawScreen, RawScreenCallback, RawScreenInput};
 use crate::userinput;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::collections::{HashMap, VecDeque};
@@ -149,10 +149,27 @@ impl Standalone {
         let evttx = self.evttx.clone();
         let termconf = self.config.term.clone();
         let handle = thread::spawn(move || {
-            let term = RawScreen::new(termconf);
-            let cb = StandaloneCallback::new(evttx);
-            if let Err(e) = render_ui(term, uirx, cb) {
-                eprintln!("screen error {}", e);
+            let mut screen = RawScreen::new(termconf);
+            let mut cb = StandaloneCallback::new(evttx);
+            let mut terminal = match init_terminal() {
+                Err(e) => {
+                    eprintln!("error init raw terminal {}", e);
+                    return;
+                }
+                Ok(terminal) => terminal,
+            };
+            loop {
+                match screen.render(&mut terminal, &uirx, &mut cb) {
+                    Err(e) => {
+                        eprintln!("error render raw terminal {}", e);
+                        return;
+                    }
+                    Ok(true) => {
+                        eprintln!("exiting raw terminal");
+                        return;
+                    }
+                    _ => (),
+                }
             }
         });
         self.to_screen = Some((uitx, handle));
@@ -263,7 +280,7 @@ impl Standalone {
                             if let Err(e) = self.script.exec(&ctr.content) {
                                 eprintln!("exec script error {}", e);
                                 // also send to event bus
-                                self.push_evtq_styled_line(err_line(e.to_string()));
+                                self.push_evtq_styled_line(StyledLine::err(e.to_string()));
                             }
                             break;
                         }
@@ -277,37 +294,19 @@ impl Standalone {
                     cmd.truncate(cmd.len() - 1);
                 }
                 // todo: add alias/script handling
-                // let cmds = runtime::translate_cmds(cmd, self.config.term.cmd_delimiter, &vec![]);
-
-                let sep = self.config.term.cmd_delimiter;
-                let cmds: Vec<String> = cmd
-                    .split(|c| c == '\n' || c == sep)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_owned())
-                    .collect();
-                for mut cmd in cmds {
-                    if cmd.is_empty() && self.config.term.ignore_empty_cmd {
-                        continue;
-                    }
-                    self.cmd_nr += 1;
-                    if self.config.term.echo_cmd && self.cmd_nr > 2 {
-                        if let Some((ref to_screen, _)) = self.to_screen {
-                            if let Err(e) = to_screen
-                                .send(RawScreenInput::Line(StyledLine::raw_line(cmd.to_owned())))
-                            {
-                                eprintln!("send echo command error {}", e);
+                let cmds = runtime::translate_cmds(cmd, self.config.term.cmd_delimiter, &vec![]);
+                for (tgt, cmd) in cmds {
+                    match tgt {
+                        Target::World => {
+                            if self.config.term.echo_cmd && self.cmd_nr > 2 {
+                                self.push_evtq_styled_line(StyledLine::raw(cmd.to_owned()));
                             }
+                            self.push_evtq_mud_string(cmd);
                         }
-                    }
-                    // add newline at end and send to world
-                    cmd.push('\n');
-                    let mut bs = Vec::new();
-                    if let Err(e) = self.encoder.encode_to(&cmd, &mut bs) {
-                        eprintln!("encode to bytes error {}", e);
-                    }
-                    if let Some(ref to_mud) = self.to_mud {
-                        if let Err(e) = to_mud.send(bs) {
-                            eprintln!("send world input error {}", e);
+                        Target::Script => {
+                            if let Err(e) = self.script.exec(cmd) {
+                                self.push_evtq_styled_line(StyledLine::err(e.to_string()));
+                            }
                         }
                     }
                 }
@@ -318,7 +317,7 @@ impl Standalone {
                     // this action will only happen on evttx, so send it to evtq is safe
                     // let err_style = Style::default().add_modifier(Modifier::REVERSED);
                     // let err_line = StyledMessage{spans: vec![Span::styled(s.to_owned(), err_style)], orig: s, ended: true};
-                    self.push_evtq_styled_line(err_line(e.to_string()));
+                    self.push_evtq_styled_line(StyledLine::err(e.to_string()));
                 }
             }
             Event::TelnetBytesToMud(bs) => {
@@ -371,6 +370,18 @@ impl Standalone {
         let mut lines = VecDeque::new();
         lines.push_back(line);
         evtq.push_back(DerivedEvent::DisplayLines(lines));
+    }
+
+    fn push_evtq_mud_string(&self, cmd: String) {
+        let mut evtq = self.evtq.lock().unwrap();
+        if let Some(DerivedEvent::StringToMud(s)) = evtq.back_mut() {
+            if !s.ends_with('\n') {
+                s.push('\n');
+            }
+            s.push_str(&cmd);
+            return;
+        }
+        evtq.push_back(DerivedEvent::StringToMud(cmd));
     }
 }
 

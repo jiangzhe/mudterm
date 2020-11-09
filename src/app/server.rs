@@ -6,7 +6,7 @@ use crate::event::{DerivedEvent, Event};
 use crate::protocol::Packet;
 use crate::runtime::script::Script;
 use crate::runtime::trigger::CompiledTrigger;
-use crate::style::{err_line, StyleReflector, StyledLine};
+use crate::style::{StyleReflector, StyledLine};
 use crate::transport::{Inbound, InboundMessage, Outbound};
 use crate::ui::Lines;
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -310,7 +310,7 @@ impl Server {
                             if let Err(e) = self.script.exec(&ctr.content) {
                                 eprintln!("exec script error {}", e);
                                 // also send to event bus
-                                self.push_evtq_styled_line(err_line(e.to_string()));
+                                self.push_evtq_styled_line(StyledLine::err(e.to_string()));
                             }
                             break;
                         }
@@ -334,7 +334,7 @@ impl Server {
             }
             Event::UserScriptLine(s) => {
                 if let Err(e) = self.script.exec(&s) {
-                    self.push_evtq_styled_line(err_line(e.to_string()));
+                    self.push_evtq_styled_line(StyledLine::err(e.to_string()));
                 }
             }
         }

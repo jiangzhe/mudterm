@@ -3,10 +3,10 @@ use crate::error::Result;
 use crate::style::StyledLine;
 use crossbeam_channel::Receiver;
 use std::collections::VecDeque;
-use std::io;
+use std::io::{self, Stdout};
 use termion::event::{Key, MouseButton, MouseEvent};
 use termion::input::MouseTerminal;
-use termion::raw::IntoRawMode;
+use termion::raw::{RawTerminal, IntoRawMode};
 use termion::screen::AlternateScreen;
 use tui::backend::{Backend, TermionBackend};
 use tui::layout::{Constraint, Direction, Layout};
@@ -38,84 +38,83 @@ impl RawScreen {
         }
     }
 
+    /// returns true means quit the render process
     pub fn render<B: Backend, C: RawScreenCallback>(
-        mut self,
-        mut terminal: Terminal<B>,
-        uirx: Receiver<RawScreenInput>,
-        mut cb: C,
-    ) -> Result<()> {
-        loop {
-            match uirx.recv()? {
-                RawScreenInput::Key(key) => match key {
-                    Key::Char('\n') => {
-                        if self.script_mode {
-                            let mut script = std::mem::replace(&mut self.command, String::new());
-                            script.remove(0);
-                            self.script_mode = false;
-                            cb.on_script(&mut self, script)
-                        } else {
-                            let cmd = std::mem::replace(&mut self.command, String::new());
-                            cb.on_cmd(&mut self, cmd);
-                        }
-                    }
-                    Key::Char(c) if c == self.script_prefix && self.command.is_empty() => {
-                        self.command.push(c);
-                        self.script_mode = true;
-                    }
-                    Key::Char(c) => {
-                        self.command.push(c);
-                    }
-                    Key::Backspace => {
-                        self.command.pop();
-                        if self.command.is_empty() {
-                            // turn off script mode
-                            self.script_mode = false;
-                        }
-                    }
-                    Key::Ctrl('q') => {
-                        // self.evttx.send(Event::Quit)?;
-                        cb.on_quit(&mut self);
-                        break;
-                    }
-                    Key::Ctrl('f') => {
-                        self.auto_follow = !self.auto_follow;
-                    }
-                    k => {
-                        eprintln!("unhandled key {:?}", k);
-                    }
-                },
-                RawScreenInput::Lines(sms) => {
-                    self.lines.push_lines(sms);
-                }
-                RawScreenInput::Line(sm) => {
-                    if !self.lines.is_last_line_ended() {
-                        self.lines.append_to_last_line(sm);
+        &mut self,
+        terminal: &mut Terminal<B>,
+        uirx: &Receiver<RawScreenInput>,
+        cb: &mut C,
+    ) -> Result<bool> {
+        match uirx.recv()? {
+            RawScreenInput::Key(key) => match key {
+                Key::Char('\n') => {
+                    if self.script_mode {
+                        let mut script = std::mem::replace(&mut self.command, String::new());
+                        script.remove(0);
+                        self.script_mode = false;
+                        cb.on_script(self, script)
                     } else {
-                        self.lines.push_line(sm);
+                        let cmd = std::mem::replace(&mut self.command, String::new());
+                        cb.on_cmd(self, cmd);
                     }
                 }
-                RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelUp, ..))
-                    if !self.auto_follow =>
-                {
-                    if self.scroll.0 > 0 {
-                        self.scroll.0 -= 1;
+                Key::Char(c) if c == self.script_prefix && self.command.is_empty() => {
+                    self.command.push(c);
+                    self.script_mode = true;
+                }
+                Key::Char(c) => {
+                    self.command.push(c);
+                }
+                Key::Backspace => {
+                    self.command.pop();
+                    if self.command.is_empty() {
+                        // turn off script mode
+                        self.script_mode = false;
                     }
                 }
-                RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelDown, ..))
-                    if !self.auto_follow =>
-                {
-                    // increase scroll means searching newer messages
-                    self.scroll.0 += 1;
+                Key::Ctrl('q') => {
+                    // self.evttx.send(Event::Quit)?;
+                    cb.on_quit(self);
+                    return Ok(true);
                 }
-                RawScreenInput::Mouse(_) => {
-                    // not to render the screen
-                    continue;
+                Key::Ctrl('f') => {
+                    self.auto_follow = !self.auto_follow;
                 }
-                RawScreenInput::Tick | RawScreenInput::WindowResize => (),
+                k => {
+                    eprintln!("unhandled key {:?}", k);
+                }
+            },
+            RawScreenInput::Lines(sms) => {
+                self.lines.push_lines(sms);
             }
-            draw_terminal(&mut self, &mut terminal)?;
+            RawScreenInput::Line(sm) => {
+                if !self.lines.is_last_line_ended() {
+                    self.lines.append_to_last_line(sm);
+                } else {
+                    self.lines.push_line(sm);
+                }
+            }
+            RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelUp, ..))
+                if !self.auto_follow =>
+            {
+                if self.scroll.0 > 0 {
+                    self.scroll.0 -= 1;
+                }
+            }
+            RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelDown, ..))
+                if !self.auto_follow =>
+            {
+                // increase scroll means searching newer messages
+                self.scroll.0 += 1;
+            }
+            RawScreenInput::Mouse(_) => {
+                // not to render the screen
+                return Ok(false);
+            }
+            RawScreenInput::Tick | RawScreenInput::WindowResize => (),
         }
-        Ok(())
+        draw_terminal(self, terminal)?;
+        Ok(false)
     }
 }
 
@@ -172,18 +171,28 @@ pub trait RawScreenCallback {
     fn on_quit(&mut self, screen: &mut RawScreen);
 }
 
-pub fn render_ui(
-    screen: RawScreen,
-    uirx: Receiver<RawScreenInput>,
-    cb: impl RawScreenCallback,
-) -> Result<()> {
+// pub fn render_ui(
+//     screen: RawScreen,
+//     uirx: Receiver<RawScreenInput>,
+//     cb: impl RawScreenCallback,
+// ) -> Result<()> {
+//     let stdout = io::stdout().into_raw_mode()?;
+//     let stdout = MouseTerminal::from(stdout);
+//     let stdout = AlternateScreen::from(stdout);
+//     let backend = TermionBackend::new(stdout);
+//     let terminal = Terminal::new(backend)?;
+//     screen.render(terminal, uirx, cb)
+// }
+
+pub fn init_terminal() -> Result<Terminal<TermionBackend<AlternateScreen<MouseTerminal<RawTerminal<Stdout>>>>>> {
     let stdout = io::stdout().into_raw_mode()?;
     let stdout = MouseTerminal::from(stdout);
     let stdout = AlternateScreen::from(stdout);
     let backend = TermionBackend::new(stdout);
     let terminal = Terminal::new(backend)?;
-    screen.render(terminal, uirx, cb)
+    Ok(terminal)
 }
+
 
 #[derive(Debug, Clone)]
 pub enum RawScreenInput {
