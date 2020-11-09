@@ -1,5 +1,1 @@
-
-
-pub trait Stage {
-
-}
+pub trait Stage {}

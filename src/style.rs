@@ -1,7 +1,7 @@
-use ansi_parser::{AnsiParser, Output, AnsiSequence};
-use tui::style::{Style, Modifier, Color};
-use tui::text::Span;
+use ansi_parser::{AnsiParser, AnsiSequence, Output};
 use std::collections::VecDeque;
+use tui::style::{Color, Modifier, Style};
+use tui::text::Span;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// convert ansi sequence and text blocks to tui text
@@ -18,7 +18,7 @@ pub struct StyleReflector {
 
 impl Default for StyleReflector {
     fn default() -> Self {
-        Self{
+        Self {
             style: Style::default(),
             spaces_per_tab: 8,
             // convert_em_space: false,
@@ -36,9 +36,8 @@ pub struct StyledLine {
 }
 
 impl StyledLine {
-
     pub fn empty() -> Self {
-        Self{
+        Self {
             spans: Vec::new(),
             orig: String::new(),
             ended: false,
@@ -46,7 +45,7 @@ impl StyledLine {
     }
 
     pub fn raw_line(line: String) -> Self {
-        Self{
+        Self {
             spans: vec![Span::raw(line.to_owned())],
             orig: line,
             ended: true,
@@ -83,7 +82,10 @@ impl StyledLine {
                         curr_width += cw;
                     } else {
                         // exceeds max width
-                        let new_span = Span::styled(std::mem::replace(&mut new_content, String::new()), new_style);
+                        let new_span = Span::styled(
+                            std::mem::replace(&mut new_content, String::new()),
+                            new_style,
+                        );
                         curr_line.push(new_span);
                         lines.push(std::mem::replace(&mut curr_line, Vec::new()));
                         // we need to push current char to new content
@@ -155,22 +157,20 @@ impl StyleReflector {
                     }
                 }
                 Output::Escape(seq) => match seq {
-                    AnsiSequence::SetGraphicsMode(sgm) => {
-                        match sgm.len() {
-                            0 => {
-                                self.style = Style::default();
-                            }
-                            _ => {
-                                for code in sgm {
-                                    self.style = apply_ansi_sgr(self.style, code);
-                                }
-                            },
+                    AnsiSequence::SetGraphicsMode(sgm) => match sgm.len() {
+                        0 => {
+                            self.style = Style::default();
                         }
-                    }
+                        _ => {
+                            for code in sgm {
+                                self.style = apply_ansi_sgr(self.style, code);
+                            }
+                        }
+                    },
                     _ => {
                         // eprintln!("unexpected ansi escape {:?}", seq)
-                    },
-                }
+                    }
+                },
             }
         }
         lines
@@ -179,7 +179,9 @@ impl StyleReflector {
     fn try_concat_last_line(lines: &mut VecDeque<StyledLine>, line: &mut StyledLine) -> bool {
         if let Some(last_line) = lines.back_mut() {
             if !last_line.ended {
-                last_line.spans.extend(std::mem::replace(&mut line.spans, vec![]));
+                last_line
+                    .spans
+                    .extend(std::mem::replace(&mut line.spans, vec![]));
                 last_line.orig.push_str(&line.orig);
                 last_line.ended = line.ended;
                 return true;
@@ -212,8 +214,9 @@ fn apply_ansi_sgr(mut style: Style, code: u8) -> Style {
         22 => style.remove_modifier(Modifier::DIM),
         23 => style.remove_modifier(Modifier::ITALIC),
         24 => style.remove_modifier(Modifier::UNDERLINED),
-        25 => style.remove_modifier(Modifier::SLOW_BLINK)
-                .remove_modifier(Modifier::RAPID_BLINK),
+        25 => style
+            .remove_modifier(Modifier::SLOW_BLINK)
+            .remove_modifier(Modifier::RAPID_BLINK),
         27 => style.remove_modifier(Modifier::REVERSED),
         28 => style.remove_modifier(Modifier::HIDDEN),
         29 => style.remove_modifier(Modifier::CROSSED_OUT),
@@ -273,9 +276,8 @@ pub struct CJKStringAdapter {
 }
 
 impl CJKStringAdapter {
-
-    pub fn new() -> Self{
-        Self{
+    pub fn new() -> Self {
+        Self {
             os: String::new(),
             es: String::new(),
             width: 0,
@@ -325,7 +327,11 @@ pub fn err_style() -> Style {
 }
 
 pub fn err_line(s: String) -> StyledLine {
-    StyledLine{spans: vec![Span::styled(s.to_owned(), err_style())], orig: s, ended: true}
+    StyledLine {
+        spans: vec![Span::styled(s.to_owned(), err_style())],
+        orig: s,
+        ended: true,
+    }
 }
 
 #[cfg(test)]
@@ -335,8 +341,18 @@ mod tests {
     #[test]
     fn test_character_width() {
         let s0 = "│";
-        println!("s0\"{}\" width={}, width_cjk={}", s0, s0.width(), s0.width_cjk());
+        println!(
+            "s0\"{}\" width={}, width_cjk={}",
+            s0,
+            s0.width(),
+            s0.width_cjk()
+        );
         let s1 = "　";
-        println!("s1\"{}\" width={}, width_cjk={}", s1, s1.width(), s1.width_cjk());
+        println!(
+            "s1\"{}\" width={}, width_cjk={}",
+            s1,
+            s1.width(),
+            s1.width_cjk()
+        );
     }
 }

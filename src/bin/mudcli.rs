@@ -1,21 +1,24 @@
+use crossbeam_channel::unbounded;
+use gag::Redirect;
 use mudterm::app::client::{Client, ClientCallback};
-use mudterm::error::{Result, Error};
-use mudterm::conf::{Config, CmdOpts};
-use mudterm::ui::{render_ui, RawScreen};
 use mudterm::auth;
-use structopt::StructOpt;
-use std::path::Path;
+use mudterm::conf::{CmdOpts, Config};
+use mudterm::error::{Error, Result};
+use mudterm::ui::{render_ui, RawScreen};
 use std::fs::File;
 use std::io::Read;
 use std::net::TcpStream;
-use gag::Redirect;
-use crossbeam_channel::unbounded;
+use std::path::Path;
+use structopt::StructOpt;
 
 fn main() -> Result<()> {
     let cmdopts = CmdOpts::from_args();
 
     if !Path::new(&cmdopts.conf_file).exists() {
-        return Err(Error::RuntimeError(format!("config file {} not found", &cmdopts.conf_file)));
+        return Err(Error::RuntimeError(format!(
+            "config file {} not found",
+            &cmdopts.conf_file
+        )));
     }
     let config: Config = {
         let mut f = File::open(&cmdopts.conf_file)?;
@@ -29,7 +32,7 @@ fn main() -> Result<()> {
     let _stderr_redirect = Redirect::stderr(debuglog)
         .map_err(|e| Error::RuntimeError(format!("Redirect stderr error {}", e)))?;
 
-    // connect to server 
+    // connect to server
     let (from_server, to_server) = {
         let from_server = TcpStream::connect(&config.client.server_addr)?;
         let from_server = auth::client_auth(from_server, &config.client.server_pass)?;

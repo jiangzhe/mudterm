@@ -1,18 +1,21 @@
-use mudterm::error::{Result, Error};
-use mudterm::conf::{CmdOpts, Config};
-use mudterm::app::standalone::Standalone;
-use std::fs::File;
 use gag::Redirect;
+use mudterm::app::standalone::Standalone;
+use mudterm::conf::{CmdOpts, Config};
+use mudterm::error::{Error, Result};
+use std::fs::File;
+use std::io::Read;
 use std::net::TcpStream;
 use std::path::Path;
-use std::io::Read;
 use structopt::StructOpt;
 
 fn main() -> Result<()> {
     let cmdopts = CmdOpts::from_args();
 
     if !Path::new(&cmdopts.conf_file).exists() {
-        return Err(Error::RuntimeError(format!("config file {} not found", &cmdopts.conf_file)));
+        return Err(Error::RuntimeError(format!(
+            "config file {} not found",
+            &cmdopts.conf_file
+        )));
     }
     let config: Config = {
         let mut f = File::open(&cmdopts.conf_file)?;
@@ -26,11 +29,11 @@ fn main() -> Result<()> {
     let _stderr_redirect = Redirect::stderr(debuglog)
         .map_err(|e| Error::RuntimeError(format!("Redirect stderr error {}", e)))?;
 
-    // connect to mud server 
+    // connect to mud server
     let (from_mud, to_mud) = {
         let from_mud = TcpStream::connect("mud.pkuxkx.net:8080")?;
         let to_mud = from_mud.try_clone()?;
-        (from_mud, to_mud)  
+        (from_mud, to_mud)
     };
 
     // create standalone app

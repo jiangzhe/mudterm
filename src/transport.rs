@@ -1,8 +1,8 @@
-use std::io::{Read, Write};
 use crate::error::Result;
+use libtelnet_rs::events::{TelnetEvents, TelnetIAC, TelnetNegotiation, TelnetSubnegotiation};
 use libtelnet_rs::Parser;
-use libtelnet_rs::events::{TelnetEvents, TelnetNegotiation, TelnetSubnegotiation, TelnetIAC};
 use std::collections::VecDeque;
+use std::io::{Read, Write};
 
 #[derive(Debug, Clone)]
 pub enum InboundMessage {
@@ -25,7 +25,7 @@ where
 {
     pub fn new(reader: R, buf_size: usize) -> Self {
         let telnet = Parser::with_capacity(4096);
-        Self{
+        Self {
             reader,
             recv_buf: vec![0u8; buf_size],
             telnet,
@@ -47,22 +47,25 @@ where
         // let mut text = vec![];
         for event in events {
             match event {
-                TelnetEvents::IAC(TelnetIAC{command}) => {
+                TelnetEvents::IAC(TelnetIAC { command }) => {
                     eprintln!("TelnetIAC[command={}]", command);
                 }
-                TelnetEvents::Negotiation(TelnetNegotiation{command, option}) => {
+                TelnetEvents::Negotiation(TelnetNegotiation { command, option }) => {
                     eprintln!("TelnetNegotiation[command={}, option={}]", command, option);
                 }
                 TelnetEvents::DataReceive(bs) => {
                     // text.extend(bs);
                     self.buf.push_back(InboundMessage::Text(bs));
-                },
+                }
                 TelnetEvents::DataSend(bs) => {
                     // eprintln!("TelnetDataSend={:?}", bs);
                     self.buf.push_back(InboundMessage::TelnetDataToSend(bs));
                 }
-                TelnetEvents::Subnegotiation(TelnetSubnegotiation{option, buffer}) => {
-                    eprintln!("TelnetSubnegotiation[option={}, buffer={:?}]", option, buffer);
+                TelnetEvents::Subnegotiation(TelnetSubnegotiation { option, buffer }) => {
+                    eprintln!(
+                        "TelnetSubnegotiation[option={}, buffer={:?}]",
+                        option, buffer
+                    );
                 }
                 _ => (),
             }
@@ -83,7 +86,7 @@ where
     W: Write,
 {
     pub fn new(writer: W) -> Self {
-        Self{
+        Self {
             writer,
             // encoder: Encoder::default(),
         }

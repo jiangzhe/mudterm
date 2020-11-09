@@ -1,9 +1,9 @@
-use encoding::{Encoding, EncoderTrap};
-use encoding::types::{RawDecoder, CodecError};
+use crate::error::{Error, Result};
 use encoding::codec::simpchinese::GB18030_ENCODING;
 use encoding::codec::tradchinese::BigFive2003Encoding;
 use encoding::codec::utf_8::UTF8Decoder;
-use crate::error::{Result, Error};
+use encoding::types::{CodecError, RawDecoder};
+use encoding::{EncoderTrap, Encoding};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Codec {
@@ -27,7 +27,11 @@ impl Default for Decoder {
 }
 
 impl Decoder {
-    pub fn decode_raw_to(&mut self, input: impl AsRef<[u8]>, output: &mut String) -> (usize, Option<CodecError>) {
+    pub fn decode_raw_to(
+        &mut self,
+        input: impl AsRef<[u8]>,
+        output: &mut String,
+    ) -> (usize, Option<CodecError>) {
         self.0.raw_feed(input.as_ref(), output)
     }
 
@@ -52,10 +56,12 @@ impl Encoder {
     pub fn encode_to(&self, input: impl AsRef<str>, output: &mut Vec<u8>) -> Result<()> {
         let input = input.as_ref();
         match self.0 {
-            Codec::Gb18030 => GB18030_ENCODING.encode_to(input, EncoderTrap::Strict, output)
+            Codec::Gb18030 => GB18030_ENCODING
+                .encode_to(input, EncoderTrap::Strict, output)
                 .map_err(|e| Error::EncodeError(format!("\"{}\"", e)))?,
             Codec::Utf8 => output.extend_from_slice(input.as_bytes()),
-            Codec::Big5 => BigFive2003Encoding.encode_to(input, EncoderTrap::Strict, output)
+            Codec::Big5 => BigFive2003Encoding
+                .encode_to(input, EncoderTrap::Strict, output)
                 .map_err(|e| Error::EncodeError(format!("\"{}\"", e)))?,
         }
         Ok(())
@@ -70,7 +76,6 @@ impl Encoder {
 pub struct AnsiBuffer(Vec<u8>);
 
 impl AnsiBuffer {
-
     pub fn new() -> Self {
         Self(Vec::new())
     }
@@ -91,7 +96,7 @@ impl AnsiBuffer {
         if let Some(esc_pos) = out.iter().rposition(|&b| b == 0x21) {
             if out[esc_pos..].contains(&b'm') {
                 // ansi escape sequence "\x21...m" found completed, just return all
-                return out; 
+                return out;
             }
             // 'm' not found, probably the sequence is incomplete
             // move bytes starting from 0x21 to buffer
@@ -112,4 +117,3 @@ mod tests {
         assert_eq!(3, pos.unwrap());
     }
 }
-

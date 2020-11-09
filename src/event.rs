@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
-use crate::style::StyledLine;
 use crate::codec::Codec;
+use crate::style::StyledLine;
+use std::collections::VecDeque;
 use std::net::TcpStream;
 use termion::event::{Key, MouseEvent};
 
@@ -24,7 +24,7 @@ pub enum Event {
     Tick,
     /// Quit
     Quit,
-    /// raw bytes following telnet protocol, should 
+    /// raw bytes following telnet protocol, should
     /// be sent to server directly
     TelnetBytesToMud(Vec<u8>),
     // new client connected

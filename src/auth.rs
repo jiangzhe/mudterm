@@ -1,8 +1,8 @@
+use crate::error::{Error, Result};
+use crate::protocol::Packet;
 use crypto::digest::Digest;
 use crypto::sha1::Sha1;
 use rand::RngCore;
-use crate::error::{Result, Error};
-use crate::protocol::Packet;
 use std::net::TcpStream;
 use std::time::Duration;
 
@@ -35,7 +35,6 @@ pub fn server_auth(mut conn: TcpStream, pass: &str) -> Result<TcpStream> {
     Ok(conn)
 }
 
-
 pub fn client_auth(mut conn: TcpStream, pass: &str) -> Result<TcpStream> {
     let orig_read_timeout = conn.read_timeout()?;
     let orig_write_timeout = conn.write_timeout()?;
@@ -60,7 +59,6 @@ pub fn client_auth(mut conn: TcpStream, pass: &str) -> Result<TcpStream> {
     eprintln!("client auth succeeds");
     Ok(conn)
 }
-
 
 pub fn gen_secret(pass: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     let mut seed = vec![0u8; 20];

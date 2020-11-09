@@ -1,14 +1,12 @@
-use rlua::Lua;
-use crate::error::Result;
 use crate::codec::Codec;
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, RwLock, Mutex};
-use crate::style::StyledLine;
-use tui::style::{Style, Color};
-use tui::text::Span;
+use crate::error::Result;
 use crate::event::DerivedEvent;
-use regex::Regex;
-use serde::{Serialize, Deserialize};
+use crate::style::StyledLine;
+use rlua::Lua;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex, RwLock};
+use tui::style::{Color, Style};
+use tui::text::Span;
 
 pub struct Script {
     pub(crate) lua: Lua,
@@ -17,7 +15,7 @@ pub struct Script {
 impl Script {
     pub fn new() -> Self {
         let lua = Lua::new();
-        Self{lua}
+        Self { lua }
     }
 
     pub fn exec<T: AsRef<[u8]>>(&self, input: T) -> Result<()> {
@@ -29,7 +27,11 @@ impl Script {
         Ok(output)
     }
 
-    pub fn setup_script_functions(&self, vars: Arc<RwLock<HashMap<String, String>>>, evtq: Arc<Mutex<VecDeque<DerivedEvent>>>) -> Result<()> {
+    pub fn setup_script_functions(
+        &self,
+        vars: Arc<RwLock<HashMap<String, String>>>,
+        evtq: Arc<Mutex<VecDeque<DerivedEvent>>>,
+    ) -> Result<()> {
         let vars_to_set = Arc::clone(&vars);
         let vars_to_get = Arc::clone(&vars);
         self.lua.context::<_, rlua::Result<()>>(|lua_ctx| {
@@ -61,7 +63,9 @@ impl Script {
                         "big5" => Codec::Big5,
                         _ => return Ok(()),
                     };
-                    evtq.lock().unwrap().push_back(DerivedEvent::SwitchCodec(new_code));
+                    evtq.lock()
+                        .unwrap()
+                        .push_back(DerivedEvent::SwitchCodec(new_code));
                     Ok(())
                 })?;
                 globals.set("SwitchCodec", switch_codec)?;
@@ -85,10 +89,16 @@ impl Script {
                 let note = lua_ctx.create_function(move |_, s: String| {
                     eprintln!("Note function called");
                     let note_style = Style::default().fg(Color::LightBlue);
-                    let sm = StyledLine{spans: vec![Span::styled(s.clone(), note_style)], orig: s, ended: true};
+                    let sm = StyledLine {
+                        spans: vec![Span::styled(s.clone(), note_style)],
+                        orig: s,
+                        ended: true,
+                    };
                     let mut sms = VecDeque::new();
                     sms.push_back(sm);
-                    evtq.lock().unwrap().push_back(DerivedEvent::DisplayLines(sms));
+                    evtq.lock()
+                        .unwrap()
+                        .push_back(DerivedEvent::DisplayLines(sms));
                     Ok(())
                 })?;
                 globals.set("Note", note)?;
@@ -97,18 +107,6 @@ impl Script {
         })?;
         Ok(())
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum Pattern {
-    Plain(String),
-    Regex(Regex),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum Target {
-    World,
-    Script,
 }
 
 #[cfg(test)]
@@ -147,5 +145,4 @@ mod tests {
             Ok(())
         }
     }
-
 }

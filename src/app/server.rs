@@ -1,25 +1,24 @@
-use crate::transport::{Inbound, Outbound, InboundMessage};
-use crate::error::{Result, Error};
-use crate::style::{StyledLine, StyleReflector, err_line};
-use crate::codec::{Codec, Decoder, Encoder, AnsiBuffer};
-use crate::script::Script;
-use crate::event::{Event, DerivedEvent};
-use crate::conf;
-use crate::trigger::{CompiledTrigger};
-use crate::protocol::Packet;
 use crate::auth;
+use crate::codec::{AnsiBuffer, Codec, Decoder, Encoder};
+use crate::conf;
+use crate::error::{Error, Result};
+use crate::event::{DerivedEvent, Event};
+use crate::protocol::Packet;
+use crate::runtime::script::Script;
+use crate::runtime::trigger::CompiledTrigger;
+use crate::style::{err_line, StyleReflector, StyledLine};
+use crate::transport::{Inbound, InboundMessage, Outbound};
 use crate::ui::Lines;
-use crossbeam_channel::{Receiver, Sender, unbounded};
-use std::{io, thread};
-use std::io::Write;
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex, RwLock};
 use std::fs::File;
+use std::io::Write;
 use std::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
+use std::{io, thread};
 
-
-/// server mode, no UI rendering, but listen and 
+/// server mode, no UI rendering, but listen and
 /// transfer UI data
 pub struct Server {
     config: conf::Config,
@@ -40,7 +39,6 @@ pub struct Server {
 }
 
 impl Server {
-
     pub fn with_config(config: conf::Config) -> Self {
         // event channel, processed by main loop
         let (evttx, evtrx) = unbounded();
@@ -82,13 +80,16 @@ impl Server {
             loop {
                 match inbound.recv() {
                     Err(e) => {
-                        eprintln!("channel receive inbound message error {}, quick the thread", e);
+                        eprintln!(
+                            "channel receive inbound message error {}, quick the thread",
+                            e
+                        );
                         return;
                     }
                     Ok(InboundMessage::Disconnected) => {
                         // once disconnected, stop the thread
                         break;
-                    },
+                    }
                     Ok(InboundMessage::Empty) => (),
                     Ok(InboundMessage::TelnetDataToSend(bs)) => {
                         evttx.send(Event::TelnetBytesToMud(bs)).unwrap();
@@ -103,7 +104,9 @@ impl Server {
 
     pub fn start_to_mud_handle(&mut self, to_mud: impl io::Write + Send + 'static) -> Result<()> {
         if self.to_mud.is_some() {
-            return Err(Error::RuntimeError("already have connection to mud".to_owned()));
+            return Err(Error::RuntimeError(
+                "already have connection to mud".to_owned(),
+            ));
         }
         let (tx, rx) = unbounded();
         thread::spawn(move || {
@@ -111,7 +114,10 @@ impl Server {
             loop {
                 match rx.recv() {
                     Err(e) => {
-                        eprintln!("channel receive to_mud message error {}, quit the thread", e);
+                        eprintln!(
+                            "channel receive to_mud message error {}, quit the thread",
+                            e
+                        );
                         return;
                     }
                     Ok(bs) => {
@@ -130,21 +136,19 @@ impl Server {
         debug_assert!(self.server_listener.is_none());
         let server_listener_handle = {
             let evttx = self.evttx.clone();
-            thread::spawn(move || {
-                loop {
-                    let conn = match listener.accept() {
-                        Err(e) => {
-                            eprintln!("accept new client connection error {}", e);
-                            thread::sleep(Duration::from_secs(1));
-                            continue;
-                        }
-                        Ok((conn, addr)) => {
-                            eprintln!("accept new client connection from {:?}", addr);
-                            conn
-                        }
-                    };
-                    evttx.send(Event::NewClient(conn)).unwrap();
-                }
+            thread::spawn(move || loop {
+                let conn = match listener.accept() {
+                    Err(e) => {
+                        eprintln!("accept new client connection error {}", e);
+                        thread::sleep(Duration::from_secs(1));
+                        continue;
+                    }
+                    Ok((conn, addr)) => {
+                        eprintln!("accept new client connection from {:?}", addr);
+                        conn
+                    }
+                };
+                evttx.send(Event::NewClient(conn)).unwrap();
             })
         };
         self.server_listener = Some(server_listener_handle);
@@ -174,7 +178,10 @@ impl Server {
             loop {
                 match rx.recv() {
                     Err(e) => {
-                        eprintln!("channel receive server message error {}, stop this thread", e);
+                        eprintln!(
+                            "channel receive server message error {}, stop this thread",
+                            e
+                        );
                         return;
                     }
                     Ok(sm) => {
@@ -193,18 +200,16 @@ impl Server {
 
     fn start_from_client_handle(&mut self, mut conn: TcpStream) {
         let evttx = self.evttx.clone();
-        thread::spawn(move || {
-            loop {
-                match Packet::read_from(&mut conn) {
-                    Err(_) => {
-                        evttx.send(Event::ClientDisconnect).unwrap();
-                        break;
-                    }
-                    Ok(Packet::Text(s)) => {
-                        evttx.send(Event::UserInputLine(s)).unwrap();
-                    }
-                    Ok(_) => (),
+        thread::spawn(move || loop {
+            match Packet::read_from(&mut conn) {
+                Err(_) => {
+                    evttx.send(Event::ClientDisconnect).unwrap();
+                    break;
                 }
+                Ok(Packet::Text(s)) => {
+                    evttx.send(Event::UserInputLine(s)).unwrap();
+                }
+                Ok(_) => (),
             }
         });
     }
@@ -212,7 +217,8 @@ impl Server {
     pub fn main_loop(mut self) -> Result<()> {
         let mut serverlog = File::create(&self.config.server.log_file)?;
         let vars = Arc::new(RwLock::new(HashMap::new()));
-        self.script.setup_script_functions(vars.clone(), self.evtq.clone())?;
+        self.script
+            .setup_script_functions(vars.clone(), self.evtq.clone())?;
         loop {
             let evt = self.evtrx.recv()?;
             if self.handle_event(evt, &mut serverlog) {
@@ -234,7 +240,9 @@ impl Server {
             Event::Tick => unimplemented!("tick event"),
             Event::WindowResize => unreachable!("server mode does not support WindowResize"),
             Event::UserInputLines(cmds) => unimplemented!(),
-            Event::TerminalKey(_) | Event::TerminalMouse(_) => unreachable!("server mode does not support terminal event"),
+            Event::TerminalKey(_) | Event::TerminalMouse(_) => {
+                unreachable!("server mode does not support terminal event")
+            }
             Event::TelnetBytesToMud(bs) => {
                 if let Some(ref to_mud) = self.to_mud {
                     if let Err(e) = to_mud.send(bs) {

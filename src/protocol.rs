@@ -1,9 +1,9 @@
-use std::io::{Read, Write};
-use crate::error::{Result, Error};
-use tui::style::{Style, Color, Modifier};
-use tui::text::Span;
-use byteorder::{LE, ReadBytesExt, WriteBytesExt};
+use crate::error::{Error, Result};
+use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use std::io::Cursor;
+use std::io::{Read, Write};
+use tui::style::{Color, Modifier, Style};
+use tui::text::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
@@ -16,7 +16,6 @@ pub enum Packet {
 }
 
 impl Packet {
-
     pub fn header(&self) -> u8 {
         match self {
             Self::Ok => 0x00,
@@ -54,7 +53,12 @@ impl Packet {
                 let (spans, ended) = decode_styled_text(&bs)?;
                 Self::StyledText(spans, ended)
             }
-            header => return Err(Error::DecodeError(format!("invalid header in packet end {:x}", header))),
+            header => {
+                return Err(Error::DecodeError(format!(
+                    "invalid header in packet end {:x}",
+                    header
+                )))
+            }
         };
         Ok(pkt)
     }
@@ -89,13 +93,23 @@ fn decode_styled_text(src: &[u8]) -> Result<(Vec<Span<'static>>, bool)> {
         let bg = cursor.read_u8()?;
         let bg = num_to_color(bg);
         let add_modifier = cursor.read_u16::<LE>()?;
-        let add_modifier = Modifier::from_bits(add_modifier).ok_or_else(|| Error::DecodeError("invalid add_modifier".to_owned()))?;
+        let add_modifier = Modifier::from_bits(add_modifier)
+            .ok_or_else(|| Error::DecodeError("invalid add_modifier".to_owned()))?;
         let sub_modifier = cursor.read_u16::<LE>()?;
-        let sub_modifier = Modifier::from_bits(sub_modifier).ok_or_else(|| Error::DecodeError("invalid sub_modifier".to_owned()))?;
+        let sub_modifier = Modifier::from_bits(sub_modifier)
+            .ok_or_else(|| Error::DecodeError("invalid sub_modifier".to_owned()))?;
         let len = cursor.read_u32::<LE>()?;
         let mut content = vec![0u8; len as usize];
         cursor.read_exact(&mut content[..])?;
-        spans.push(Span::styled(String::from_utf8(content)?, Style{fg, bg, add_modifier, sub_modifier}));
+        spans.push(Span::styled(
+            String::from_utf8(content)?,
+            Style {
+                fg,
+                bg,
+                add_modifier,
+                sub_modifier,
+            },
+        ));
     }
     Ok((spans, ended))
 }
@@ -190,7 +204,6 @@ fn write_packet<W: Write>(mut writer: W, buf: &[u8]) -> Result<()> {
     writer.write_all(&buf[..])?;
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

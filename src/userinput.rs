@@ -1,10 +1,10 @@
-use crate::event::Event;
 use crate::error::Result;
+use crate::event::Event;
 use crate::ui::RawScreenInput;
+use crossbeam_channel::Sender;
+use std::io;
 use termion::event::Event as TEvent;
 use termion::input::TermRead;
-use std::io;
-use crossbeam_channel::Sender;
 
 pub fn subscribe_userinput(tx: Sender<Event>) -> Result<()> {
     let stdin = io::stdin();

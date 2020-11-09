@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
-use regex::Regex;
 use crate::error::Result;
-use crate::script::{Pattern, Target};
+use crate::runtime::{Pattern, Target};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -18,8 +18,8 @@ pub struct Trigger {
 }
 
 impl Default for Trigger {
-    fn default() -> Self{
-        Self{
+    fn default() -> Self {
+        Self {
             name: String::new(),
             group: String::from("default"),
             pattern: String::new(),
@@ -34,7 +34,6 @@ impl Default for Trigger {
 }
 
 impl Trigger {
-
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
@@ -77,13 +76,18 @@ impl Trigger {
         self
     }
 
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
     pub fn compile(&self) -> Result<CompiledTrigger> {
         let pattern = if self.regexp {
             Pattern::Regex(Regex::new(&self.pattern)?)
         } else {
             Pattern::Plain(self.pattern.to_owned())
         };
-        Ok(CompiledTrigger{
+        Ok(CompiledTrigger {
             name: self.name.to_owned(),
             group: self.group.to_owned(),
             match_lines: self.match_lines,
@@ -122,8 +126,7 @@ impl CompiledTrigger {
     }
 }
 
-pub const NO_TRIGGERS: [CompiledTrigger;0] = [];
-
+pub const NO_TRIGGERS: [CompiledTrigger; 0] = [];
 
 #[cfg(test)]
 mod tests {
@@ -139,7 +142,7 @@ mod tests {
             .match_lines(5)
             .seq(20)
             .scripts("haha\nhoho\n  heihei");
-        
+
         let trs = Triggers(vec![tr]);
 
         let s = serde_yaml::to_string(&trs).unwrap();

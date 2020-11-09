@@ -1,13 +1,11 @@
-use crossbeam_channel::Sender;
 use crate::error::Result;
-use signal_hook::iterator::Signals;
 use crate::event::Event;
 use crate::ui::RawScreenInput;
+use crossbeam_channel::Sender;
+use signal_hook::iterator::Signals;
 
 pub fn subscribe_signals(tx: Sender<Event>) -> Result<()> {
-    let sigs = Signals::new(&[
-        signal_hook::SIGWINCH,
-    ])?;
+    let sigs = Signals::new(&[signal_hook::SIGWINCH])?;
     loop {
         for sig in sigs.pending() {
             match sig as libc::c_int {
@@ -21,9 +19,7 @@ pub fn subscribe_signals(tx: Sender<Event>) -> Result<()> {
 }
 
 pub fn subscribe_signals_for_ui(tx: Sender<RawScreenInput>) -> Result<()> {
-    let sigs = Signals::new(&[
-        signal_hook::SIGWINCH,
-    ])?;
+    let sigs = Signals::new(&[signal_hook::SIGWINCH])?;
     loop {
         for sig in sigs.pending() {
             match sig as libc::c_int {

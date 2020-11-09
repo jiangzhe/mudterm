@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use structopt::StructOpt;
 // #[derive(Debug, Clone)]
 // pub struct Config {
@@ -43,7 +43,7 @@ pub struct World {
 
 impl Default for World {
     fn default() -> Self {
-        Self{
+        Self {
             addr: String::from("mud.pkuxkx.net:8080"),
         }
     }
@@ -61,7 +61,7 @@ pub struct Server {
 
 impl Default for Server {
     fn default() -> Self {
-        Self{
+        Self {
             port: 9680,
             log_file: String::from("server.log"),
             log_ansi: false,
@@ -81,7 +81,7 @@ pub struct Client {
 
 impl Default for Client {
     fn default() -> Self {
-        Self{
+        Self {
             server_addr: String::from("127.0.0.1:9680"),
             server_pass: String::from("pass"),
             debug_file: String::from("client_debug.log"),
@@ -99,7 +99,7 @@ pub struct Term {
 
 impl Default for Term {
     fn default() -> Self {
-        Self{
+        Self {
             max_lines: 1000,
             echo_cmd: false,
             cmd_delimiter: ';',
@@ -108,13 +108,11 @@ impl Default for Term {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, StructOpt)]
 pub struct CmdOpts {
     #[structopt(short, long, default_value = "mud.toml")]
     pub conf_file: String,
 }
-
 
 #[cfg(test)]
 mod tests {

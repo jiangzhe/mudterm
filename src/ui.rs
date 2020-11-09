@@ -1,20 +1,19 @@
-use std::collections::VecDeque;
-use tui::text::Spans;
-use crate::style::StyledLine;
-use crate::error::Result;
 use crate::conf;
+use crate::error::Result;
+use crate::style::StyledLine;
 use crossbeam_channel::Receiver;
+use std::collections::VecDeque;
 use std::io;
-use termion::raw::IntoRawMode;
+use termion::event::{Key, MouseButton, MouseEvent};
 use termion::input::MouseTerminal;
+use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
-use termion::event::{Key, MouseEvent, MouseButton};
 use tui::backend::{Backend, TermionBackend};
+use tui::layout::{Constraint, Direction, Layout};
+use tui::style::{Color, Style};
+use tui::text::Spans;
+use tui::widgets::{Block, Borders, Paragraph, Wrap};
 use tui::Terminal;
-use tui::layout::{Layout, Direction, Constraint};
-use tui::widgets::{Paragraph, Block, Borders, Wrap};
-use tui::style::{Style, Color};
-
 
 pub struct RawScreen {
     pub lines: Lines,
@@ -26,11 +25,10 @@ pub struct RawScreen {
 }
 
 impl RawScreen {
-
     pub fn new(termconf: conf::Term) -> Self {
         let mut lines = Lines::new();
         lines.set_max_lines(termconf.max_lines);
-        Self{
+        Self {
             lines,
             command: String::new(),
             script_prefix: '.',
@@ -40,7 +38,12 @@ impl RawScreen {
         }
     }
 
-    pub fn render<B: Backend, C: RawScreenCallback>(mut self, mut terminal: Terminal<B>, uirx: Receiver<RawScreenInput>, mut cb: C) -> Result<()> {
+    pub fn render<B: Backend, C: RawScreenCallback>(
+        mut self,
+        mut terminal: Terminal<B>,
+        uirx: Receiver<RawScreenInput>,
+        mut cb: C,
+    ) -> Result<()> {
         loop {
             match uirx.recv()? {
                 RawScreenInput::Key(key) => match key {
@@ -79,8 +82,8 @@ impl RawScreen {
                     }
                     k => {
                         eprintln!("unhandled key {:?}", k);
-                    },
-                }
+                    }
+                },
                 RawScreenInput::Lines(sms) => {
                     self.lines.push_lines(sms);
                 }
@@ -91,82 +94,95 @@ impl RawScreen {
                         self.lines.push_line(sm);
                     }
                 }
-                RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelUp, ..)) if !self.auto_follow => {
+                RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelUp, ..))
+                    if !self.auto_follow =>
+                {
                     if self.scroll.0 > 0 {
                         self.scroll.0 -= 1;
                     }
                 }
-                RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelDown, ..)) if !self.auto_follow => {
+                RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelDown, ..))
+                    if !self.auto_follow =>
+                {
                     // increase scroll means searching newer messages
                     self.scroll.0 += 1;
                 }
                 RawScreenInput::Mouse(_) => {
                     // not to render the screen
                     continue;
-                },
+                }
                 RawScreenInput::Tick | RawScreenInput::WindowResize => (),
             }
-            terminal.draw(|f| {
-                // with border
-                let server_board_height = f.size().height as usize - 3;
-                let server_board_width = f.size().width - 3;
-                // let server_max_lines = server_board_height - 2;
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .margin(0)
-                    .constraints(
-                        [
-                            Constraint::Length(server_board_height as u16),
-                            Constraint::Length(3),
-                        ].as_ref(),
-                    )
-                    .split(f.size());
-                // server board
-                let text = self.lines.lastn_with_width(5000, server_board_width);
-                if self.auto_follow {
-                    if server_board_height >= text.len() + 2 {
-                        self.scroll.0 = 0;
-                    } else {
-                        self.scroll.0 = (text.len() + 2 - server_board_height) as u16;
-                    }
-                }
-                let paragraph = Paragraph::new(text)
-                    .style(Style::default())
-                    .scroll(self.scroll)
-                    .block(Block::default().title("Server").borders(Borders::ALL));
-                f.render_widget(paragraph, chunks[0]);
-                // user input
-                let mut cmd_style = Style::default();
-                if self.script_mode {
-                    cmd_style = cmd_style.bg(Color::Blue);
-                }
-                let cmd = Paragraph::new(self.command.as_ref())
-                    .style(cmd_style)
-                    .block(Block::default().borders(Borders::ALL).title("Command"))
-                    .wrap(Wrap{trim:false});
-                f.render_widget(cmd, chunks[1]);
-            })?;
+            draw_terminal(&mut self, &mut terminal)?;
         }
         Ok(())
     }
 }
 
-pub trait RawScreenCallback {
-
-    fn on_cmd(&mut self, term: &mut RawScreen, cmd: String);
-
-    fn on_script(&mut self, term: &mut RawScreen, script: String);
-
-    fn on_quit(&mut self, term: &mut RawScreen);
+fn draw_terminal<B: Backend>(screen: &mut RawScreen, terminal: &mut Terminal<B>) -> Result<()> {
+    terminal.draw(|f| {
+        // with border
+        let server_board_height = f.size().height as usize - 3;
+        let server_board_width = f.size().width - 3;
+        // let server_max_lines = server_board_height - 2;
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(0)
+            .constraints(
+                [
+                    Constraint::Length(server_board_height as u16),
+                    Constraint::Length(3),
+                ]
+                .as_ref(),
+            )
+            .split(f.size());
+        // server board
+        let text = screen.lines.lastn_with_width(5000, server_board_width);
+        if screen.auto_follow {
+            if server_board_height >= text.len() + 2 {
+                screen.scroll.0 = 0;
+            } else {
+                screen.scroll.0 = (text.len() + 2 - server_board_height) as u16;
+            }
+        }
+        let paragraph = Paragraph::new(text)
+            .style(Style::default())
+            .scroll(screen.scroll)
+            .block(Block::default().title("Server").borders(Borders::ALL));
+        f.render_widget(paragraph, chunks[0]);
+        // user input
+        let mut cmd_style = Style::default();
+        if screen.script_mode {
+            cmd_style = cmd_style.bg(Color::Blue);
+        }
+        let cmd = Paragraph::new(screen.command.as_ref())
+            .style(cmd_style)
+            .block(Block::default().borders(Borders::ALL).title("Command"))
+            .wrap(Wrap { trim: false });
+        f.render_widget(cmd, chunks[1]);
+    })?;
+    Ok(())
 }
 
-pub fn render_ui(term: RawScreen, uirx: Receiver<RawScreenInput>, cb: impl RawScreenCallback) -> Result<()> {
+pub trait RawScreenCallback {
+    fn on_cmd(&mut self, screen: &mut RawScreen, cmd: String);
+
+    fn on_script(&mut self, screen: &mut RawScreen, script: String);
+
+    fn on_quit(&mut self, screen: &mut RawScreen);
+}
+
+pub fn render_ui(
+    screen: RawScreen,
+    uirx: Receiver<RawScreenInput>,
+    cb: impl RawScreenCallback,
+) -> Result<()> {
     let stdout = io::stdout().into_raw_mode()?;
     let stdout = MouseTerminal::from(stdout);
     let stdout = AlternateScreen::from(stdout);
     let backend = TermionBackend::new(stdout);
     let terminal = Terminal::new(backend)?;
-    term.render(terminal, uirx, cb)
+    screen.render(terminal, uirx, cb)
 }
 
 #[derive(Debug, Clone)]
@@ -185,9 +201,8 @@ pub struct Lines {
 }
 
 impl Lines {
-
     pub fn new() -> Self {
-        Self{
+        Self {
             buffer: VecDeque::new(),
             max_lines: 5000,
         }
@@ -239,11 +254,14 @@ impl Lines {
 
     pub fn lastn(&self, n: usize) -> Vec<Spans<'static>> {
         if self.buffer.len() <= n {
-            self.buffer.iter()
+            self.buffer
+                .iter()
                 .map(|m| Spans::from(m.spans.clone()))
                 .collect()
         } else {
-            self.buffer.iter().skip(self.buffer.len() - n)
+            self.buffer
+                .iter()
+                .skip(self.buffer.len() - n)
                 .map(|m| Spans::from(m.spans.clone()))
                 .collect()
         }
