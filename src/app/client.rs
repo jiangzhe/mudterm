@@ -109,3 +109,56 @@ impl RawScreenCallback for ClientCallback {
 
     fn on_quit(&mut self, _term: &mut RawScreen) {}
 }
+
+
+/// major refactor
+
+use crate::app::App;
+use crate::event::Event;
+use crate::conf;
+use crate::ui::init_terminal;
+
+pub fn start_userinput_handle(evttx: Sender<Event>) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        if let Err(e) = userinput::subscribe_userinput(evttx) {
+            eprintln!("userinput error {}", e);
+        }
+    })
+}
+
+pub fn start_signal_handle(evttx: Sender<Event>) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        if let Err(e) = signal::subscribe_signals(evttx) {
+            eprintln!("signal error {}", e);
+        }
+    })
+}
+
+pub fn start_ui_handle(termconf: conf::Term, mut cb: impl RawScreenCallback + Send + 'static) -> Result<(Sender<RawScreenInput>, thread::JoinHandle<()> )> {
+    let (uitx, uirx) = unbounded::<RawScreenInput>();
+    let handle = thread::spawn(move || {
+        let mut screen = RawScreen::new(termconf);
+        // let mut cb = StandaloneCallback::new(evttx);
+        let mut terminal = match init_terminal() {
+            Err(e) => {
+                eprintln!("error init raw terminal {}", e);
+                return;
+            }
+            Ok(terminal) => terminal,
+        };
+        loop {
+            match screen.render(&mut terminal, &uirx, &mut cb) {
+                Err(e) => {
+                    eprintln!("error render raw terminal {}", e);
+                    return;
+                }
+                Ok(true) => {
+                    eprintln!("exiting raw terminal");
+                    return;
+                }
+                _ => (),
+            }
+        }
+    });
+    Ok((uitx, handle))
+}

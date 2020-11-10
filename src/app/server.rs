@@ -5,7 +5,7 @@ use crate::error::{Error, Result};
 use crate::event::{DerivedEvent, Event};
 use crate::protocol::Packet;
 use crate::runtime::script::Script;
-use crate::runtime::trigger::CompiledTrigger;
+use crate::runtime::trigger::Trigger;
 use crate::style::{StyleReflector, StyledLine};
 use crate::transport::{Inbound, InboundMessage, Outbound};
 use crate::ui::Lines;
@@ -32,7 +32,7 @@ pub struct Server {
     encoder: Encoder,
     reflector: StyleReflector,
     script: Script,
-    triggers: Vec<CompiledTrigger>,
+    triggers: Vec<Trigger>,
     evtq: Arc<Mutex<VecDeque<DerivedEvent>>>,
     lines: Lines,
     ansi_buf: AnsiBuffer,
@@ -303,11 +303,12 @@ impl Server {
                     let text = sm.orig.clone();
                     self.push_evtq_styled_line(sm);
                     // invoke trigger for each line
-                    for ctr in &self.triggers {
+                    for tr in &self.triggers {
                         // invoke at most one matched trigger
-                        if ctr.is_match(&text) {
+                        if tr.is_match(&text) {
                             eprintln!("trigger matched: {}", text);
-                            if let Err(e) = self.script.exec(&ctr.content) {
+                            // todo: diff actions based on target
+                            if let Err(e) = self.script.exec(&tr.model.scripts) {
                                 eprintln!("exec script error {}", e);
                                 // also send to event bus
                                 self.push_evtq_styled_line(StyledLine::err(e.to_string()));
@@ -386,4 +387,56 @@ impl Server {
         lines.push_back(line);
         evtq.push_back(DerivedEvent::DisplayLines(lines));
     }
+}
+
+
+/// major refactor
+
+pub fn start_from_mud_handle(evttx: Sender<Event>, from_mud: impl io::Read + Send + 'static) {
+    thread::spawn(move || {
+        let mut inbound = Inbound::new(from_mud, 4096);
+        loop {
+            match inbound.recv() {
+                Err(e) => {
+                    eprintln!("channel receive inbound message error {}", e);
+                    return;
+                }
+                Ok(InboundMessage::Disconnected) => {
+                    // once disconnected, stop the thread
+                    break;
+                }
+                Ok(InboundMessage::Empty) => (),
+                Ok(InboundMessage::TelnetDataToSend(bs)) => {
+                    evttx.send(Event::TelnetBytesToMud(bs)).unwrap()
+                }
+                Ok(InboundMessage::Text(bs)) => evttx.send(Event::BytesFromMud(bs)).unwrap(),
+            }
+        }
+    });
+}
+
+pub fn start_to_mud_handle(to_mud: impl io::Write + Send + 'static) -> Result<Sender<Vec<u8>>> {
+    let (tx, rx) = unbounded::<Vec<u8>>();
+    thread::spawn(move || {
+        let mut outbound = Outbound::new(to_mud);
+        loop {
+            match rx.recv() {
+                Err(e) => {
+                    eprintln!("{}", e);
+                    return;
+                }
+                Ok(bs) => {
+                    if let Err(e) = outbound.send(bs) {
+                        eprintln!("send server error: {}", e);
+                    }
+                }
+            }
+        }
+    });
+    Ok(tx)
+}
+
+pub fn init_server_log(log_file: &str) -> Result<File> {
+    let file = File::create(log_file)?;
+    Ok(file)
 }

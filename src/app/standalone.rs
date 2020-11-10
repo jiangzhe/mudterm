@@ -3,7 +3,7 @@ use crate::conf;
 use crate::error::{Error, Result};
 use crate::event::{DerivedEvent, Event};
 use crate::runtime::script::Script;
-use crate::runtime::trigger::CompiledTrigger;
+use crate::runtime::trigger::Trigger;
 use crate::runtime::{self, Target};
 use crate::signal;
 use crate::style::{StyleReflector, StyledLine};
@@ -32,7 +32,7 @@ pub struct Standalone {
     encoder: Encoder,
     reflector: StyleReflector,
     script: Script,
-    triggers: Vec<CompiledTrigger>,
+    triggers: Vec<Trigger>,
     evtq: Arc<Mutex<VecDeque<DerivedEvent>>>,
     cmd_nr: usize,
     ansi_buf: AnsiBuffer,
@@ -277,7 +277,7 @@ impl Standalone {
                         // invoke at most one matched trigger
                         if ctr.is_match(&text) {
                             eprintln!("trigger matched: {}", text);
-                            if let Err(e) = self.script.exec(&ctr.content) {
+                            if let Err(e) = self.script.exec(&ctr.model.scripts) {
                                 eprintln!("exec script error {}", e);
                                 // also send to event bus
                                 self.push_evtq_styled_line(StyledLine::err(e.to_string()));

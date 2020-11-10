@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Trigger {
+pub struct TriggerModel {
     pub name: String,
     pub group: String,
     pub pattern: String,
@@ -17,7 +17,7 @@ pub struct Trigger {
     pub scripts: String,
 }
 
-impl Default for Trigger {
+impl Default for TriggerModel {
     fn default() -> Self {
         Self {
             name: String::new(),
@@ -33,7 +33,7 @@ impl Default for Trigger {
     }
 }
 
-impl Trigger {
+impl TriggerModel {
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
@@ -81,44 +81,28 @@ impl Trigger {
         self
     }
 
-    pub fn compile(&self) -> Result<CompiledTrigger> {
+    pub fn compile(self) -> Result<Trigger> {
         let pattern = if self.regexp {
             Pattern::Regex(Regex::new(&self.pattern)?)
         } else {
             Pattern::Plain(self.pattern.to_owned())
         };
-        Ok(CompiledTrigger {
-            name: self.name.to_owned(),
-            group: self.group.to_owned(),
-            match_lines: self.match_lines,
+        Ok(Trigger {
+            model: self,
             pattern,
-            target: self.target,
-            enabled: self.enabled,
-            content: self.scripts.to_owned(),
         })
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename = "triggers")]
-pub struct Triggers(Vec<Trigger>);
-
 #[derive(Debug, Clone)]
-pub struct CompiledTrigger {
-    pub name: String,
-    pub group: String,
-    pub match_lines: u32,
-    pub pattern: Pattern,
-    pub target: Target,
-    pub enabled: bool,
-    pub content: String,
+pub struct Trigger {
+    pub model: TriggerModel,
+    pattern: Pattern,
 }
 
-impl CompiledTrigger {
+impl Trigger {
     pub fn is_match(&self, input: &str) -> bool {
-        if self.match_lines != 1 {
-            return false;
-        }
+        // todo: multiline trigger
         match self.pattern {
             Pattern::Plain(ref s) => input.contains(s),
             Pattern::Regex(ref re) => re.is_match(input),
@@ -126,7 +110,7 @@ impl CompiledTrigger {
     }
 }
 
-pub const NO_TRIGGERS: [CompiledTrigger; 0] = [];
+pub const NO_TRIGGERS: [Trigger; 0] = [];
 
 #[cfg(test)]
 mod tests {
@@ -134,21 +118,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_trigger_serde() {
-        let tr = Trigger::default()
-            .group("abc")
-            .regexp("^hello$")
-            .target(Target::Script)
-            .match_lines(5)
-            .seq(20)
-            .scripts("haha\nhoho\n  heihei");
+    fn test_trigger_match() {
 
-        let trs = Triggers(vec![tr]);
-
-        let s = serde_yaml::to_string(&trs).unwrap();
-        println!("to_string={}", s);
-
-        let trs: Triggers = serde_yaml::from_str(&s).unwrap();
-        println!("from_string={:?}", trs);
     }
 }
