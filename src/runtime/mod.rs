@@ -1,10 +1,14 @@
 pub mod alias;
 pub mod script;
 pub mod trigger;
+pub mod sub;
 
 use alias::Alias;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use sub::{Sub, SubParser};
+use std::str::FromStr;
+use crate::error::{Result, Error};
 
 #[derive(Debug, Clone)]
 pub enum Pattern {
@@ -22,8 +26,29 @@ impl Pattern {
                     input.contains(s)
                 }
             }
-            Pattern::Regex(ref re) => re.is_match(input),
+            Pattern::Regex(re) => re.is_match(input),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Scripts {
+    Plain(String),
+    Subs(Vec<Sub>),
+}
+
+impl FromStr for Scripts {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        if s.is_empty() {
+            return Ok(Scripts::Plain(String::new()));
+        }
+        let mut subs = SubParser::new().parse(s)?;
+        if subs.len() == 1 && subs[0].is_text() {
+            return Ok(Scripts::Plain(subs.pop().unwrap().as_text().unwrap()));
+        }
+        Ok(Scripts::Subs(subs))
     }
 }
 

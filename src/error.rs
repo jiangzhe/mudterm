@@ -32,6 +32,8 @@ pub enum Error {
     TomlError(#[from] toml::de::Error),
     #[error("Auth error")]
     AuthError,
+    #[error("Compile script error {0}")]
+    CompileScriptError(String),
 }
 
 impl<T> From<crossbeam_channel::SendError<T>> for Error {
