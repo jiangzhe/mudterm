@@ -1,4 +1,4 @@
-use crate::error::{Result, Error};
+use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Sub {
@@ -8,7 +8,6 @@ pub enum Sub {
 }
 
 impl Sub {
-
     pub fn is_text(&self) -> bool {
         match self {
             Sub::Text(_) => true,
@@ -58,9 +57,8 @@ pub struct SubParser {
 }
 
 impl SubParser {
-
     pub fn new() -> Self {
-        SubParser{
+        SubParser {
             state: SubState::None,
             buf: String::new(),
         }
@@ -81,11 +79,11 @@ impl SubParser {
                     self.buf.push(c);
                     self.state = SubState::None;
                 }
-                '0' ..= '9' if self.state == SubState::Escape => {
+                '0'..='9' if self.state == SubState::Escape => {
                     self.buf.push(c);
                     self.state = SubState::Number;
                 }
-                '0' ..= '9' if self.state == SubState::Number => {
+                '0'..='9' if self.state == SubState::Number => {
                     self.buf.push(c);
                 }
                 '<' if self.state == SubState::Escape => {
@@ -95,28 +93,31 @@ impl SubParser {
                     rs.push(Sub::Name(std::mem::replace(&mut self.buf, String::new())));
                     self.state = SubState::None;
                 }
-                'a' ..= 'z' | 'A' ..= 'Z' | '_' if self.state == SubState::Escape => {
+                'a'..='z' | 'A'..='Z' | '_' if self.state == SubState::Escape => {
                     self.buf.push(c);
                     self.state = SubState::Name;
                 }
-                'a' ..= 'z' | 'A' ..= 'Z' | '_' | '0' ..= '9' if self.state == SubState::Name => {
+                'a'..='z' | 'A'..='Z' | '_' | '0'..='9' if self.state == SubState::Name => {
                     self.buf.push(c);
                 }
                 _ if self.state == SubState::None => {
                     self.buf.push(c);
                 }
-                _ if self.state == SubState::Number => {
-                    match self.buf.parse::<u8>() {
-                        Ok(n) => {
-                            rs.push(Sub::Number(n));
-                            self.state = SubState::None;
-                            self.buf.clear();
-                            self.buf.push(c);
-                        }
-                        Err(e) => return Err(Error::CompileScriptError(format!("{} in {}", e, input))),
+                _ if self.state == SubState::Number => match self.buf.parse::<u8>() {
+                    Ok(n) => {
+                        rs.push(Sub::Number(n));
+                        self.state = SubState::None;
+                        self.buf.clear();
+                        self.buf.push(c);
                     }
+                    Err(e) => return Err(Error::CompileScriptError(format!("{} in {}", e, input))),
+                },
+                _ => {
+                    return Err(Error::CompileScriptError(format!(
+                        "invalid input {}",
+                        input
+                    )))
                 }
-                _ => return Err(Error::CompileScriptError(format!("invalid input {}", input))),
             }
         }
         // only None and Number are valid final state
@@ -126,17 +127,20 @@ impl SubParser {
                     rs.push(Sub::Text(std::mem::replace(&mut self.buf, String::new())));
                 }
             }
-            SubState::Number => {
-                match self.buf.parse::<u8>() {
-                    Ok(n) => {
-                        rs.push(Sub::Number(n));
-                        self.state = SubState::None;
-                        self.buf.clear();
-                    }
-                    Err(e) => return Err(Error::CompileScriptError(format!("{} in {}", e, input))),
+            SubState::Number => match self.buf.parse::<u8>() {
+                Ok(n) => {
+                    rs.push(Sub::Number(n));
+                    self.state = SubState::None;
+                    self.buf.clear();
                 }
+                Err(e) => return Err(Error::CompileScriptError(format!("{} in {}", e, input))),
+            },
+            _ => {
+                return Err(Error::CompileScriptError(format!(
+                    "invalid input {}",
+                    input
+                )))
             }
-            _ => return Err(Error::CompileScriptError(format!("invalid input {}", input))),
         }
         Ok(rs)
     }
@@ -149,7 +153,6 @@ enum SubState {
     Number,
     Name,
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -165,6 +168,15 @@ mod tests {
         let r = SubParser::new().parse("say %1").unwrap();
         assert_eq!(vec![Sub::Text("say ".into()), Sub::Number(1)], r);
         let r = SubParser::new().parse("say %<var1> but %2 to end").unwrap();
-        assert_eq!(vec![Sub::Text("say ".into()), Sub::Name("var1".into()), Sub::Text(" but ".into()), Sub::Number(2), Sub::Text(" to end".into())], r);
+        assert_eq!(
+            vec![
+                Sub::Text("say ".into()),
+                Sub::Name("var1".into()),
+                Sub::Text(" but ".into()),
+                Sub::Number(2),
+                Sub::Text(" to end".into())
+            ],
+            r
+        );
     }
 }

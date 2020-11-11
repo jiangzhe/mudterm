@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::io::{self, Stdout};
 use termion::event::{Key, MouseButton, MouseEvent};
 use termion::input::MouseTerminal;
-use termion::raw::{RawTerminal, IntoRawMode};
+use termion::raw::{IntoRawMode, RawTerminal};
 use termion::screen::AlternateScreen;
 use tui::backend::{Backend, TermionBackend};
 use tui::layout::{Constraint, Direction, Layout};
@@ -171,20 +171,8 @@ pub trait RawScreenCallback {
     fn on_quit(&mut self, screen: &mut RawScreen);
 }
 
-// pub fn render_ui(
-//     screen: RawScreen,
-//     uirx: Receiver<RawScreenInput>,
-//     cb: impl RawScreenCallback,
-// ) -> Result<()> {
-//     let stdout = io::stdout().into_raw_mode()?;
-//     let stdout = MouseTerminal::from(stdout);
-//     let stdout = AlternateScreen::from(stdout);
-//     let backend = TermionBackend::new(stdout);
-//     let terminal = Terminal::new(backend)?;
-//     screen.render(terminal, uirx, cb)
-// }
-
-pub fn init_terminal() -> Result<Terminal<TermionBackend<AlternateScreen<MouseTerminal<RawTerminal<Stdout>>>>>> {
+pub fn init_terminal(
+) -> Result<Terminal<TermionBackend<AlternateScreen<MouseTerminal<RawTerminal<Stdout>>>>>> {
     let stdout = io::stdout().into_raw_mode()?;
     let stdout = MouseTerminal::from(stdout);
     let stdout = AlternateScreen::from(stdout);
@@ -192,7 +180,6 @@ pub fn init_terminal() -> Result<Terminal<TermionBackend<AlternateScreen<MouseTe
     let terminal = Terminal::new(backend)?;
     Ok(terminal)
 }
-
 
 #[derive(Debug, Clone)]
 pub enum RawScreenInput {

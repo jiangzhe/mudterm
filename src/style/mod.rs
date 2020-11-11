@@ -1,32 +1,12 @@
-use ansi_parser::{AnsiParser, AnsiSequence, Output};
-use std::collections::VecDeque;
+pub mod reflector;
+pub mod flow;
+pub mod line;
+pub mod ansi;
+
 use tui::style::{Color, Modifier, Style};
 use tui::text::Span;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-
-/// convert ansi sequence and text blocks to tui text
-pub struct StyleReflector {
-    style: Style,
-    spaces_per_tab: usize,
-    // convert_em_space: bool,
-    remove_carriage: bool,
-    /// if this field is set to true, it will fill up additional spaces
-    /// if the char's width is less than width_cjk.
-    /// it is helpful for fonts that does not display correctly in cjk environment
-    adapt_cjk: bool,
-}
-
-impl Default for StyleReflector {
-    fn default() -> Self {
-        Self {
-            style: Style::default(),
-            spaces_per_tab: 8,
-            // convert_em_space: false,
-            remove_carriage: true,
-            adapt_cjk: true,
-        }
-    }
-}
+use reflector::CJKStringAdapter;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StyledLine {
@@ -54,6 +34,15 @@ impl StyledLine {
 
     pub fn err(s: String) -> StyledLine {
         let style = Style::default().add_modifier(Modifier::REVERSED);
+        StyledLine {
+            spans: vec![Span::styled(s.to_owned(), style)],
+            orig: s,
+            ended: true,
+        }
+    }
+
+    pub fn note(s: String) -> StyledLine {
+        let style = Style::default().fg(Color::LightBlue);
         StyledLine {
             spans: vec![Span::styled(s.to_owned(), style)],
             orig: s,
@@ -116,95 +105,6 @@ impl StyledLine {
     }
 }
 
-impl StyleReflector {
-    /// accept input string and convert to tui spans
-    pub fn reflect(&mut self, input: impl AsRef<str>) -> VecDeque<StyledLine> {
-        let mut lines = VecDeque::new();
-        for output in input.as_ref().ansi_parse() {
-            match output {
-                Output::TextBlock(s) => {
-                    // let mut line = Vec::new();
-                    let mut line = StyledLine::empty();
-                    let mut adapter = CJKStringAdapter::new();
-                    let mut newline_end = false;
-                    for c in s.chars() {
-                        newline_end = false;
-                        match c {
-                            '\n' => {
-                                line.extract(&mut adapter, self.style, true);
-                                Self::push_line(&mut lines, line);
-                                line = StyledLine::empty();
-                                newline_end = true;
-                            }
-                            '\t' => {
-                                // tui does not handle tab correctly, so convert to spaces
-                                let width = adapter.width();
-                                let tabs = width / self.spaces_per_tab;
-                                let num = (tabs + 1) * self.spaces_per_tab - width;
-                                for _ in 0..num {
-                                    adapter.push(' ');
-                                }
-                            }
-                            '\r' if self.remove_carriage => (),
-                            _ => {
-                                adapter.push(c);
-                                if self.adapt_cjk {
-                                    if let (Some(w), Some(cw)) = (c.width(), c.width_cjk()) {
-                                        if w < cw {
-                                            for _ in w..cw {
-                                                adapter.push_additional(' ');
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if !newline_end {
-                        line.extract(&mut adapter, self.style, false);
-                        Self::push_line(&mut lines, line);
-                    }
-                }
-                Output::Escape(seq) => match seq {
-                    AnsiSequence::SetGraphicsMode(sgm) => match sgm.len() {
-                        0 => {
-                            self.style = Style::default();
-                        }
-                        _ => {
-                            for code in sgm {
-                                self.style = apply_ansi_sgr(self.style, code);
-                            }
-                        }
-                    },
-                    _ => {
-                        // eprintln!("unexpected ansi escape {:?}", seq)
-                    }
-                },
-            }
-        }
-        lines
-    }
-
-    fn try_concat_last_line(lines: &mut VecDeque<StyledLine>, line: &mut StyledLine) -> bool {
-        if let Some(last_line) = lines.back_mut() {
-            if !last_line.ended {
-                last_line
-                    .spans
-                    .extend(std::mem::replace(&mut line.spans, vec![]));
-                last_line.orig.push_str(&line.orig);
-                last_line.ended = line.ended;
-                return true;
-            }
-        }
-        false
-    }
-
-    fn push_line(lines: &mut VecDeque<StyledLine>, mut line: StyledLine) {
-        if !Self::try_concat_last_line(lines, &mut line) {
-            lines.push_back(line);
-        }
-    }
-}
 
 /// todo: check 37, 90, 97 color matching
 fn apply_ansi_sgr(mut style: Style, code: u8) -> Style {
@@ -274,60 +174,6 @@ fn apply_ansi_sgr(mut style: Style, code: u8) -> Style {
         106 => style.bg(Color::LightCyan),
         107 => style.bg(Color::White),
         _ => panic!("unknown SGR argument {}", code),
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CJKStringAdapter {
-    os: String,
-    es: String,
-    width: usize,
-}
-
-impl CJKStringAdapter {
-    pub fn new() -> Self {
-        Self {
-            os: String::new(),
-            es: String::new(),
-            width: 0,
-        }
-    }
-
-    pub fn width(&self) -> usize {
-        self.width
-    }
-
-    pub fn drain_origin_and_extended(&mut self) -> (String, String) {
-        let os = std::mem::replace(&mut self.os, String::new());
-        let es = std::mem::replace(&mut self.es, String::new());
-        self.width = 0;
-        (os, es)
-    }
-
-    pub fn push(&mut self, c: char) {
-        self.os.push(c);
-        self.es.push(c);
-        self.width += c.width_cjk().unwrap_or(0);
-    }
-
-    pub fn push_additional(&mut self, c: char) {
-        self.es.push(c);
-        self.width += c.width_cjk().unwrap_or(0);
-    }
-
-    pub fn push_str(&mut self, s: &str) {
-        self.os.push_str(s);
-        self.es.push_str(s);
-        self.width += s.width_cjk();
-    }
-
-    pub fn push_additional_str(&mut self, s: &str) {
-        self.es.push_str(s);
-        self.width += s.width_cjk();
-    }
-
-    pub fn into_origin_and_extended(self) -> (String, String) {
-        (self.os, self.es)
     }
 }
 

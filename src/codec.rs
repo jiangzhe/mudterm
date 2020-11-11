@@ -2,7 +2,7 @@ use crate::error::{Error, Result};
 use encoding::codec::simpchinese::GB18030_ENCODING;
 use encoding::codec::tradchinese::BigFive2003Encoding;
 use encoding::codec::utf_8::UTF8Decoder;
-use encoding::types::{CodecError, RawDecoder};
+use encoding::types::{CodecError, RawDecoder, StringWriter};
 use encoding::{EncoderTrap, Encoding};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -31,8 +31,14 @@ impl Decoder {
         &mut self,
         input: impl AsRef<[u8]>,
         output: &mut String,
+        remove_carriage: bool,
     ) -> (usize, Option<CodecError>) {
-        self.0.raw_feed(input.as_ref(), output)
+        if remove_carriage {
+            self.0
+                .raw_feed(input.as_ref(), &mut RemoveCarriageWriter(output))
+        } else {
+            self.0.raw_feed(input.as_ref(), output)
+        }
     }
 
     pub fn switch_codec(&mut self, code: Codec) {
@@ -40,6 +46,29 @@ impl Decoder {
             Codec::Gb18030 => self.0 = GB18030_ENCODING.raw_decoder(),
             Codec::Utf8 => self.0 = UTF8Decoder::new(),
             Codec::Big5 => self.0 = BigFive2003Encoding.raw_decoder(),
+        }
+    }
+}
+
+struct RemoveCarriageWriter<'a>(&'a mut String);
+
+impl<'a> StringWriter for RemoveCarriageWriter<'a> {
+    #[inline]
+    fn writer_hint(&mut self, _expectedlen: usize) {
+        self.0.reserve(_expectedlen);
+    }
+
+    #[inline]
+    fn write_char(&mut self, c: char) {
+        if c != '\r' {
+            self.0.write_char(c);
+        }
+    }
+
+    #[inline]
+    fn write_str(&mut self, s: &str) {
+        for c in s.chars() {
+            self.write_char(c);
         }
     }
 }
@@ -72,48 +101,65 @@ impl Encoder {
     }
 }
 
-/// handle incomplete ansi sequence, especially patterns like "\x21[n0;n1;n2m"
-pub struct AnsiBuffer(Vec<u8>);
+pub struct MudCodec {
+    gcodec: Codec,
+    decoder: Decoder,
+    encoder: Encoder,
+    // ansi_buf: AnsiBuffer,
+}
 
-impl AnsiBuffer {
+impl MudCodec {
     pub fn new() -> Self {
-        Self(Vec::new())
+        Self {
+            gcodec: Codec::default(),
+            decoder: Decoder::default(),
+            encoder: Encoder::default(),
+            // ansi_buf: AnsiBuffer::new(),
+        }
     }
 
-    /// for each input, will concat with internal buffer if not empty
-    /// also check if the last several bytes may be the incomplete ansi escape
-    /// sequence
-    pub fn process(&mut self, input: Vec<u8>) -> Vec<u8> {
-        // concat with previous buffered bytes
-        let mut out = if !self.0.is_empty() {
-            let mut out: Vec<_> = self.0.drain(..).collect();
-            out.extend(input);
-            out
-        } else {
-            input
-        };
-        // check if ends with incomplete ansi escape
-        if let Some(esc_pos) = out.iter().rposition(|&b| b == 0x21) {
-            if out[esc_pos..].contains(&b'm') {
-                // ansi escape sequence "\x21...m" found completed, just return all
-                return out;
-            }
-            // 'm' not found, probably the sequence is incomplete
-            // move bytes starting from 0x21 to buffer
-            self.0.extend(out.drain(esc_pos..));
-        }
-        // no escape found, just return all
-        out
+    pub fn switch_codec(&mut self, code: Codec) {
+        self.gcodec = code;
+        self.decoder.switch_codec(code);
+        self.encoder.switch_codec(code);
+    }
+
+    pub fn decode(&mut self, bs: &[u8], remove_carriage: bool) -> String {
+        // let bs = self.ansi_buf.process(bs);
+        let mut s = String::new();
+        let _ = self.decoder.decode_raw_to(bs, &mut s, remove_carriage);
+        s
+    }
+
+    pub fn encode(&mut self, s: &str) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.encoder.encode_to(s, &mut output)?;
+        Ok(output)
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    use super::*;
+
     #[test]
     fn test_slice_rposition() {
         let bs = vec![0u8, 0, 0, 1, 0, 0];
         let pos = bs.iter().rposition(|&b| b == 1);
         println!("pos={:?}", pos);
         assert_eq!(3, pos.unwrap());
+    }
+
+    #[test]
+    fn test_incomplete_ansi_sequence() {
+        let mut mc = MudCodec::new();
+        mc.switch_codec(Codec::Utf8);
+        let bs = b"hello\x21[37;".to_vec();
+        let s = mc.decode(&bs, false);
+        assert_eq!(&s[..], "hello");
+        let bs = b"1mworld".to_vec();
+        let s = mc.decode(&bs, false);
+        assert_eq!(&s[..], "\x21[37;1mworld");
     }
 }

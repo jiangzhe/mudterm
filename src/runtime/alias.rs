@@ -1,16 +1,21 @@
 use crate::error::Result;
-use crate::runtime::{Pattern, Target};
-use regex::Regex;
+use crate::runtime::{Pattern, Target, Scripts};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 pub struct Alias {
     pub model: AliasModel,
     pattern: Pattern,
+    scripts: Scripts,
 }
 
 impl Alias {
     pub fn is_match(&self, input: &str) -> bool {
         self.pattern.is_match(input, true)
+    }
+
+    pub fn prepare_scripts(&self, input: &str) -> Option<Cow<str>> {
+        super::prepare_scripts(&self.pattern, &self.scripts, input)
     }
 }
 
@@ -86,14 +91,11 @@ impl AliasModel {
     }
 
     pub fn compile(self) -> Result<Alias> {
-        let pattern = if self.regexp {
-            Pattern::Regex(Regex::new(&self.pattern)?)
-        } else {
-            Pattern::Plain(self.pattern.clone())
-        };
+        let (pattern, scripts) = super::compile_scripts(&self.pattern, &self.scripts, self.regexp, 1)?;
         Ok(Alias {
             model: self,
             pattern,
+            scripts
         })
     }
 }

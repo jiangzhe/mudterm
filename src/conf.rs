@@ -12,6 +12,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct World {
     pub addr: String,
 }
@@ -25,6 +26,7 @@ impl Default for World {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Server {
     pub port: u16,
     pub log_file: String,
@@ -48,9 +50,11 @@ impl Default for Server {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Client {
     pub server_addr: String,
     pub server_pass: String,
+    pub log_file: String,
     pub debug_file: String,
 }
 
@@ -59,17 +63,21 @@ impl Default for Client {
         Self {
             server_addr: String::from("127.0.0.1:9680"),
             server_pass: String::from("pass"),
+            log_file: String::from("client.log"),
             debug_file: String::from("client_debug.log"),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Term {
     pub max_lines: usize,
     pub echo_cmd: bool,
-    pub cmd_delimiter: char,
-    pub ignore_empty_cmd: bool,
+    pub cmd_delim: char,
+    pub send_empty_cmd: bool,
+    pub reserve_cr: bool,
+    pub pad_non_cjk: bool
 }
 
 impl Default for Term {
@@ -77,8 +85,10 @@ impl Default for Term {
         Self {
             max_lines: 1000,
             echo_cmd: false,
-            cmd_delimiter: ';',
-            ignore_empty_cmd: true,
+            cmd_delim: ';',
+            send_empty_cmd: false,
+            reserve_cr: false,
+            pad_non_cjk: false,
         }
     }
 }
@@ -121,6 +131,6 @@ mod tests {
     fn test_toml_serialize_enum() {
         let m = Mode::Standalone;
         let s = toml::to_string(&m).unwrap();
-        println!("{}", s);    
+        println!("{}", s);
     }
 }

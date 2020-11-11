@@ -1,410 +1,103 @@
-use crate::codec::{AnsiBuffer, Codec, Decoder, Encoder};
-use crate::conf;
-use crate::error::{Error, Result};
-use crate::event::{DerivedEvent, Event};
-use crate::runtime::script::Script;
-use crate::runtime::trigger::Trigger;
-use crate::runtime::{self, Target};
-use crate::signal;
-use crate::style::{StyleReflector, StyledLine};
-use crate::transport::{Inbound, InboundMessage, Outbound};
-use crate::ui::{init_terminal, RawScreen, RawScreenCallback, RawScreenInput};
-use crate::userinput;
-use crossbeam_channel::{unbounded, Receiver, Sender};
-use std::collections::{HashMap, VecDeque};
-use std::fs::File;
-use std::io::Write;
-use std::sync::{Arc, Mutex, RwLock};
-use std::{io, thread};
+use crate::error::Result;
+use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, RuntimeEventHandler};
+use crate::runtime::Runtime;
+use crate::ui::RawScreenInput;
+use crossbeam_channel::Sender;
+use std::thread;
 
 /// standalone app, directly connect to mud world
 /// and render UI
 pub struct Standalone {
-    config: conf::Config,
-    evtrx: Receiver<Event>,
-    evttx: Sender<Event>,
-    // store both tx and thread, so when exiting the application
-    // we can wait for ui thread to quit the raw mode
-    to_screen: Option<(Sender<RawScreenInput>, thread::JoinHandle<()>)>,
-    to_mud: Option<Sender<Vec<u8>>>,
-    gcodec: Codec,
-    decoder: Decoder,
-    encoder: Encoder,
-    reflector: StyleReflector,
-    script: Script,
-    triggers: Vec<Trigger>,
-    evtq: Arc<Mutex<VecDeque<DerivedEvent>>>,
-    cmd_nr: usize,
-    ansi_buf: AnsiBuffer,
+    uitx: Sender<RawScreenInput>,
+    worldtx: Sender<Vec<u8>>,
 }
 
 impl Standalone {
-    pub fn with_config(config: conf::Config) -> Self {
-        // event channel, processed by main loop
-        let (evttx, evtrx) = unbounded();
-        Self {
-            config,
-            evtrx,
-            evttx,
-            to_screen: None,
-            to_mud: None,
-            gcodec: Codec::default(),
-            decoder: Decoder::default(),
-            encoder: Encoder::default(),
-            reflector: StyleReflector::default(),
-            script: Script::new(),
-            triggers: Vec::new(),
-            evtq: Arc::new(Mutex::new(VecDeque::new())),
-            cmd_nr: 0,
-            ansi_buf: AnsiBuffer::new(),
-        }
+    pub fn new(uitx: Sender<RawScreenInput>, worldtx: Sender<Vec<u8>>) -> Self {
+        Self { uitx, worldtx }
     }
+}
 
-    pub fn switch_codec(&mut self, code: Codec) {
-        self.gcodec = code;
-        self.decoder.switch_codec(code);
-        self.encoder.switch_codec(code);
-    }
-
-    pub fn load_triggers(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    pub fn start_userinput_handle(&mut self) {
-        let evttx = self.evttx.clone();
-        thread::spawn(move || {
-            if let Err(e) = userinput::subscribe_userinput(evttx) {
-                eprintln!("userinput error {}", e);
-            }
-        });
-    }
-
-    pub fn start_from_mud_handle(&mut self, from_mud: std::net::TcpStream) {
-        let evttx = self.evttx.clone();
-        thread::spawn(move || {
-            let mut inbound = Inbound::new(from_mud, 4096);
-            loop {
-                match inbound.recv() {
-                    Err(e) => {
-                        eprintln!("channel receive inbound message error {}", e);
-                        return;
-                    }
-                    Ok(InboundMessage::Disconnected) => {
-                        // once disconnected, stop the thread
-                        break;
-                    }
-                    Ok(InboundMessage::Empty) => (),
-                    Ok(InboundMessage::TelnetDataToSend(bs)) => {
-                        evttx.send(Event::TelnetBytesToMud(bs)).unwrap()
-                    }
-                    Ok(InboundMessage::Text(bs)) => evttx.send(Event::BytesFromMud(bs)).unwrap(),
-                }
-            }
-        });
-    }
-
-    pub fn start_to_mud_handle(&mut self, to_mud: impl io::Write + Send + 'static) -> Result<()> {
-        if self.to_mud.is_some() {
-            return Err(Error::RuntimeError(
-                "already have connection to mud".to_owned(),
-            ));
-        }
-        let (tx, rx) = unbounded::<Vec<u8>>();
-        thread::spawn(move || {
-            let mut outbound = Outbound::new(to_mud);
-            loop {
-                match rx.recv() {
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        return;
-                    }
-                    Ok(bs) => {
-                        if let Err(e) = outbound.send(bs) {
-                            eprintln!("send server error: {}", e);
-                        }
-                    }
-                }
-            }
-        });
-        self.to_mud = Some(tx);
-        Ok(())
-    }
-
-    pub fn start_signal_handle(&mut self) {
-        let evttx = self.evttx.clone();
-        thread::spawn(move || {
-            if let Err(e) = signal::subscribe_signals(evttx) {
-                eprintln!("signal error {}", e);
-            }
-        });
-    }
-
-    pub fn start_ui_handle(&mut self) -> Result<()> {
-        if self.to_screen.is_some() {
-            return Err(Error::RuntimeError(
-                "already have screen handling thread".to_owned(),
-            ));
-        }
-        let (uitx, uirx) = unbounded::<RawScreenInput>();
-        let evttx = self.evttx.clone();
-        let termconf = self.config.term.clone();
-        let handle = thread::spawn(move || {
-            let mut screen = RawScreen::new(termconf);
-            let mut cb = StandaloneCallback::new(evttx);
-            let mut terminal = match init_terminal() {
-                Err(e) => {
-                    eprintln!("error init raw terminal {}", e);
-                    return;
-                }
-                Ok(terminal) => terminal,
-            };
-            loop {
-                match screen.render(&mut terminal, &uirx, &mut cb) {
-                    Err(e) => {
-                        eprintln!("error render raw terminal {}", e);
-                        return;
-                    }
-                    Ok(true) => {
-                        eprintln!("exiting raw terminal");
-                        return;
-                    }
-                    _ => (),
-                }
-            }
-        });
-        self.to_screen = Some((uitx, handle));
-        Ok(())
-    }
-
-    pub fn main_loop(mut self) -> Result<()> {
-        let mut serverlog = File::create(&self.config.server.log_file)?;
-        let vars = Arc::new(RwLock::new(HashMap::new()));
-        self.script
-            .setup_script_functions(vars.clone(), self.evtq.clone())?;
-        loop {
-            let evt = self.evtrx.recv()?;
-            if self.handle_event(evt, &mut serverlog) {
-                break;
-            }
-            // script generated events are stored in evtq
-            let events: Vec<DerivedEvent> = self.evtq.lock().unwrap().drain(..).collect();
-            for evt in events {
-                if self.handle_derived_event(evt) {
-                    break;
-                }
-            }
-        }
-        if let Some((_, ui_handle)) = self.to_screen.take() {
-            if let Err(e) = ui_handle.join() {
-                eprintln!("UI thread exits with error {:?}", e);
-            }
-        }
-        Ok(())
-    }
-
-    fn handle_event(&mut self, evt: Event, logger: &mut File) -> bool {
+impl EventHandler for Standalone {
+    fn on_event(&mut self, evt: Event, rt: &mut Runtime) -> Result<NextStep> {
         match evt {
-            Event::Quit => return true,
-            Event::NewClient(_)
-            | Event::ClientAuthFail
-            | Event::ClientAuthSuccess(_)
-            | Event::ClientDisconnect => {
-                unreachable!("standalone mode does not support certain events")
+            Event::Quit => return Ok(NextStep::Quit),
+            // 直接发送给MUD
+            Event::TelnetBytesToMud(bs) => {
+                self.worldtx.send(bs)?;
             }
+            // 以下事件发送给UI线程处理
             Event::Tick => {
-                if let Some((ref to_screen, _)) = self.to_screen {
-                    if let Err(e) = to_screen.send(RawScreenInput::Tick) {
-                        eprintln!("send screen input tick error {}", e);
-                    }
-                }
+                // todo: implements trigger by tick
+                self.uitx.send(RawScreenInput::Tick)?;
             }
             Event::TerminalKey(k) => {
-                if let Some((ref to_screen, _)) = self.to_screen {
-                    if let Err(e) = to_screen.send(RawScreenInput::Key(k)) {
-                        eprintln!("send screen input key error {}", e);
-                    }
-                }
+                self.uitx.send(RawScreenInput::Key(k))?;
             }
             Event::TerminalMouse(m) => {
-                if let Some((ref to_screen, _)) = self.to_screen {
-                    if let Err(e) = to_screen.send(RawScreenInput::Mouse(m)) {
-                        eprintln!("send screen input mouse error {}", e);
-                    }
-                }
+                self.uitx.send(RawScreenInput::Mouse(m))?;
             }
             Event::WindowResize => {
-                if let Some((ref to_screen, _)) = self.to_screen {
-                    if let Err(e) = to_screen.send(RawScreenInput::WindowResize) {
-                        eprintln!("send screen input windowresize error {}", e);
-                    }
-                }
+                self.uitx.send(RawScreenInput::WindowResize)?;
             }
+            // 以下事件交给运行时处理
             Event::BytesFromMud(bs) => {
-                let bs = self.ansi_buf.process(bs);
-                let mut s = String::new();
-                let _ = self.decoder.decode_raw_to(&bs, &mut s);
-                // log server output with ansi sequence
-                if self.config.server.log_ansi {
-                    if let Err(e) = logger.write_all(s.as_bytes()) {
-                        eprintln!("write log error {}", e);
-                    }
-                }
-                let sms = self.reflector.reflect(s);
-                // log server output without ansi sequence
-                if !self.config.server.log_ansi {
-                    for sm in &sms {
-                        if let Err(e) = logger.write_all(sm.orig.as_bytes()) {
-                            eprintln!("write log error {}", e);
-                        }
-                        if sm.ended {
-                            if let Err(e) = logger.write_all(b"\n") {
-                                eprintln!("write log error {}", e);
-                            }
-                        }
-                    }
-                }
-                // send to global event bus
-                if let Err(e) = self.evttx.send(Event::StyledLinesFromMud(sms)) {
-                    eprintln!("send server styled lines error {}", e);
-                }
+                rt.process_bytes_from_mud(&bs)?;
             }
-            Event::StyledLinesFromMud(sms) => {
-                for sm in sms {
-                    let text = sm.orig.clone();
-                    self.push_evtq_styled_line(sm);
-                    // invoke trigger for each line
-                    for ctr in &self.triggers {
-                        // invoke at most one matched trigger
-                        if ctr.is_match(&text) {
-                            eprintln!("trigger matched: {}", text);
-                            if let Err(e) = self.script.exec(&ctr.model.scripts) {
-                                eprintln!("exec script error {}", e);
-                                // also send to event bus
-                                self.push_evtq_styled_line(StyledLine::err(e.to_string()));
-                            }
-                            break;
-                        }
-                    }
-                }
+            Event::StyledLinesFromMud(lines) => {
+                rt.process_mud_lines(lines);
             }
-            Event::UserInputLine(mut cmd) => {
-                // todo: might be regenerated by alias
-                // todo: might be other built-in command
-                if cmd.ends_with('\n') {
-                    cmd.truncate(cmd.len() - 1);
-                }
-                // todo: add alias/script handling
-                let cmds = runtime::translate_cmds(cmd, self.config.term.cmd_delimiter, &vec![]);
-                for (tgt, cmd) in cmds {
-                    match tgt {
-                        Target::World => {
-                            if self.config.term.echo_cmd && self.cmd_nr > 2 {
-                                self.push_evtq_styled_line(StyledLine::raw(cmd.to_owned()));
-                            }
-                            self.push_evtq_mud_string(cmd);
-                        }
-                        Target::Script => {
-                            if let Err(e) = self.script.exec(cmd) {
-                                self.push_evtq_styled_line(StyledLine::err(e.to_string()));
-                            }
-                        }
-                    }
-                }
+            Event::UserInputLine(cmd) => {
+                rt.preprocess_user_cmd(cmd);
             }
-            Event::UserInputLines(cmds) => unimplemented!(),
             Event::UserScriptLine(s) => {
-                if let Err(e) = self.script.exec(&s) {
-                    // this action will only happen on evttx, so send it to evtq is safe
-                    // let err_style = Style::default().add_modifier(Modifier::REVERSED);
-                    // let err_line = StyledMessage{spans: vec![Span::styled(s.to_owned(), err_style)], orig: s, ended: true};
-                    self.push_evtq_styled_line(StyledLine::err(e.to_string()));
-                }
+                rt.process_user_scripts(s);
             }
-            Event::TelnetBytesToMud(bs) => {
-                if let Some(ref to_mud) = self.to_mud {
-                    if let Err(e) = to_mud.send(bs) {
-                        eprintln!("send telnet bytes error {}", e);
-                    }
-                }
-            }
+            // standalone模式不支持客户端连接，待增强
+            Event::NewClient(..)
+            | Event::ClientAuthFail
+            | Event::ClientAuthSuccess(_)
+            | Event::ClientDisconnect
+            | Event::StyledLineFromServer(_)
+            | Event::ServerDown => unreachable!("standalone mode does not support event {:?}", evt),
         }
-        false
+        Ok(NextStep::Run)
     }
+}
 
-    fn handle_derived_event(&mut self, evt: DerivedEvent) -> bool {
+impl RuntimeEventHandler for Standalone {
+    fn on_runtime_event(&mut self, evt: RuntimeEvent, rt: &mut Runtime) -> Result<NextStep> {
         match evt {
-            DerivedEvent::SwitchCodec(code) => {
-                self.switch_codec(code);
+            RuntimeEvent::SwitchCodec(code) => {
+                rt.mud_codec.switch_codec(code);
             }
-            DerivedEvent::StringToMud(mut s) => {
+            RuntimeEvent::StringToMud(mut s) => {
                 if !s.ends_with('\n') {
                     s.push('\n');
                 }
-                let mut bs = Vec::new();
-                if let Err(e) = self.encoder.encode_to(&s, &mut bs) {
-                    eprintln!("encode to bytes error {}", e);
-                }
-                if let Some(ref to_mud) = self.to_mud {
-                    if let Err(e) = to_mud.send(bs) {
-                        eprintln!("send worldtx error {}", e);
-                    }
-                }
+                let bs = rt.mud_codec.encode(&s)?;
+                self.worldtx.send(bs)?;
             }
-            DerivedEvent::DisplayLines(sms) => {
-                if let Some((ref to_screen, _)) = self.to_screen {
-                    if let Err(e) = to_screen.send(RawScreenInput::Lines(sms)) {
-                        eprintln!("send screen input lines(script) error {}", e);
-                    }
-                }
+            RuntimeEvent::DisplayLines(lines) => {
+                self.uitx.send(RawScreenInput::Lines(lines))?;
             }
         }
-        false
-    }
-
-    fn push_evtq_styled_line(&self, line: StyledLine) {
-        let mut evtq = self.evtq.lock().unwrap();
-        if let Some(DerivedEvent::DisplayLines(lines)) = evtq.back_mut() {
-            lines.push_back(line);
-            return;
-        }
-        let mut lines = VecDeque::new();
-        lines.push_back(line);
-        evtq.push_back(DerivedEvent::DisplayLines(lines));
-    }
-
-    fn push_evtq_mud_string(&self, cmd: String) {
-        let mut evtq = self.evtq.lock().unwrap();
-        if let Some(DerivedEvent::StringToMud(s)) = evtq.back_mut() {
-            if !s.ends_with('\n') {
-                s.push('\n');
-            }
-            s.push_str(&cmd);
-            return;
-        }
-        evtq.push_back(DerivedEvent::StringToMud(cmd));
+        Ok(NextStep::Run)
     }
 }
 
-pub struct StandaloneCallback {
-    evttx: Sender<Event>,
-}
+pub struct QuitStandalone(Option<thread::JoinHandle<()>>);
 
-impl StandaloneCallback {
-    pub fn new(evttx: Sender<Event>) -> Self {
-        Self { evttx }
+impl QuitStandalone {
+    pub fn new(handle: thread::JoinHandle<()>) -> Self {
+        Self(Some(handle))
     }
 }
 
-impl RawScreenCallback for StandaloneCallback {
-    fn on_cmd(&mut self, _term: &mut RawScreen, cmd: String) {
-        self.evttx.send(Event::UserInputLine(cmd)).unwrap();
-    }
-
-    fn on_script(&mut self, _term: &mut RawScreen, script: String) {
-        self.evttx.send(Event::UserScriptLine(script)).unwrap();
-    }
-
-    fn on_quit(&mut self, _term: &mut RawScreen) {
-        self.evttx.send(Event::Quit).unwrap();
+impl QuitHandler for QuitStandalone {
+    fn on_quit(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.join().unwrap();
+        }
     }
 }
