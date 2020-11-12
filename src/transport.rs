@@ -5,21 +5,21 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 
 #[derive(Debug, Clone)]
-pub enum InboundMessage {
+pub enum TelnetEvent {
     Text(Vec<u8>),
-    TelnetDataToSend(Vec<u8>),
+    DataToSend(Vec<u8>),
     Empty,
     Disconnected,
 }
 
-pub struct Inbound<R> {
+pub struct Telnet<R> {
     reader: R,
     recv_buf: Vec<u8>,
-    telnet: Parser,
-    buf: VecDeque<InboundMessage>,
+    parser: Parser,
+    buf: VecDeque<TelnetEvent>,
 }
 
-impl<R> Inbound<R>
+impl<R> Telnet<R>
 where
     R: Read,
 {
@@ -28,12 +28,12 @@ where
         Self {
             reader,
             recv_buf: vec![0u8; buf_size],
-            telnet,
+            parser: telnet,
             buf: VecDeque::new(),
         }
     }
 
-    pub fn recv(&mut self) -> Result<InboundMessage> {
+    pub fn recv(&mut self) -> Result<TelnetEvent> {
         // pop from buffer first
         if let Some(msg) = self.buf.pop_front() {
             return Ok(msg);
@@ -41,9 +41,9 @@ where
         // then try receive from server
         let n = self.reader.read(&mut self.recv_buf[..])?;
         if n == 0 {
-            return Ok(InboundMessage::Disconnected);
+            return Ok(TelnetEvent::Disconnected);
         }
-        let events = self.telnet.receive(&self.recv_buf[..n]);
+        let events = self.parser.receive(&self.recv_buf[..n]);
         // let mut text = vec![];
         for event in events {
             match event {
@@ -55,11 +55,11 @@ where
                 }
                 TelnetEvents::DataReceive(bs) => {
                     // text.extend(bs);
-                    self.buf.push_back(InboundMessage::Text(bs));
+                    self.buf.push_back(TelnetEvent::Text(bs));
                 }
                 TelnetEvents::DataSend(bs) => {
                     // eprintln!("TelnetDataSend={:?}", bs);
-                    self.buf.push_back(InboundMessage::TelnetDataToSend(bs));
+                    self.buf.push_back(TelnetEvent::DataToSend(bs));
                 }
                 TelnetEvents::Subnegotiation(TelnetSubnegotiation { option, buffer }) => {
                     eprintln!(
@@ -73,7 +73,7 @@ where
         if let Some(msg) = self.buf.pop_front() {
             return Ok(msg);
         }
-        Ok(InboundMessage::Empty)
+        Ok(TelnetEvent::Empty)
     }
 }
 

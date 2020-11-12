@@ -7,8 +7,9 @@ use crate::codec::{Codec, MudCodec};
 use crate::conf;
 use crate::error::{Error, Result};
 use crate::event::{Event, EventQueue, NextStep, RuntimeEvent, RuntimeEventHandler};
-use crate::style::StyledLine;
-use crate::style::reflector::Reflector;
+use crate::ui::span::ArcSpan;
+use crate::ui::line::Line;
+use crate::ui::ansi::SpanStream;
 use alias::Alias;
 use crossbeam_channel::Sender;
 use regex::Regex;
@@ -23,7 +24,6 @@ use std::io::Write;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use sub::{Sub, SubParser};
-use trigger::Trigger;
 
 /// 脚本环境中的变量存储和查询
 #[derive(Debug, Clone)]
@@ -58,7 +58,8 @@ pub struct Runtime {
     pub(crate) queue: EventQueue,
     vars: Variables,
     pub(crate) mud_codec: MudCodec,
-    reflector: Reflector,
+    // reflector: Reflector,
+    span_stream: SpanStream,
     echo_cmd: bool,
     cmd_delim: char,
     log_ansi: bool,
@@ -75,7 +76,8 @@ impl Runtime {
             queue: EventQueue::new(),
             vars: Variables::new(),
             mud_codec: MudCodec::new(),
-            reflector: Reflector::default(),
+            // reflector: Reflector::default(),
+            span_stream: SpanStream::new().reserve_cr(config.term.reserve_cr),
             echo_cmd: config.term.echo_cmd,
             cmd_delim: config.term.cmd_delim,
             log_ansi: config.server.log_ansi,
@@ -111,13 +113,15 @@ impl Runtime {
                 Target::World => {
                     self.cmd_nr += 1;
                     if self.echo_cmd && self.cmd_nr > 2 {
-                        self.queue.push_styled_line(StyledLine::raw(cmd.to_owned()));
+                        // self.queue.push_styled_line(StyledLine::raw(cmd.to_owned()));
+                        self.queue.push_line(Line::raw(cmd.to_owned()));
                     }
-                    self.queue.push_mud_string(cmd);
+                    self.queue.push_cmd(cmd);
                 }
                 Target::Script => {
                     if let Err(e) = self.exec(cmd) {
-                        self.queue.push_styled_line(StyledLine::err(e.to_string()));
+                        // self.queue.push_styled_line(StyledLine::err(e.to_string()));
+                        self.queue.push_line(Line::err(e.to_string()));
                     }
                 }
             }
@@ -126,19 +130,27 @@ impl Runtime {
 
     pub fn process_user_scripts(&mut self, scripts: String) {
         if let Err(e) = self.exec(&scripts) {
-            self.queue.push_styled_line(StyledLine::err(e.to_string()));
+            // self.queue.push_styled_line(StyledLine::err(e.to_string()));
+            self.queue.push_line(Line::err(e.to_string()));
         }
     }
 
-    pub fn process_mud_lines(&mut self, lines: VecDeque<StyledLine>) {
-        for line in lines {
-            self.process_mud_line(line);
-        }
-    }
+    // pub fn process_mud_lines(&mut self, lines: VecDeque<StyledLine>) {
+    //     for line in lines {
+    //         self.process_mud_line(line);
+    //     }
+    // }
 
-    pub fn process_mud_line(&mut self, line: StyledLine) {
-        // todo: apply triggers here
-        self.queue.push_styled_line(line);
+    // pub fn process_mud_line(&mut self, line: StyledLine) {
+    //     // todo: apply triggers here
+    //     self.queue.push_styled_line(line);
+    // }
+
+    pub fn process_mud_spans(&mut self, spans: Vec<ArcSpan>) {
+        for span in spans {
+            // handle trigger
+            self.queue.push_span(span);
+        }
     }
 
     pub fn process_bytes_from_mud(&mut self, bs: &[u8]) -> Result<()> {
@@ -149,20 +161,26 @@ impl Runtime {
                 logger.write_all(s.as_bytes())?;
             }
         }
-        let sms = self.reflector.reflect(s);
+        // let sms = self.reflector.reflect(s);
+        self.span_stream.fill(s);
+        let mut spans = Vec::new();
+        while let Some(span) = self.span_stream.next_span() {
+            spans.push(span);
+        }
+
         // log server output without ansi sequence
         if let Some(logger) = self.logger.as_mut() {
             if !self.log_ansi {
-                for sm in &sms {
-                    logger.write_all(sm.orig.as_bytes())?;
-                    if sm.ended {
+                for span in &spans {
+                    logger.write_all(span.content().as_bytes())?;
+                    if span.ended {
                         logger.write_all(b"\n")?;
                     }
                 }
             }
         }
         // send to global event bus
-        self.evttx.send(Event::StyledLinesFromMud(sms))?;
+        self.evttx.send(Event::SpansFromMud(spans))?;
         Ok(())
     }
 
@@ -210,7 +228,7 @@ impl Runtime {
                     "big5" => Codec::Big5,
                     _ => return Ok(()),
                 };
-                queue.push_back(RuntimeEvent::SwitchCodec(new_code));
+                queue.push(RuntimeEvent::SwitchCodec(new_code));
                 Ok(())
             })?;
             globals.set("SwitchCodec", switch_codec)?;
@@ -219,10 +237,7 @@ impl Runtime {
             let queue = self.queue.clone();
             let send = lua_ctx.create_function(move |_, mut s: String| {
                 eprintln!("Send function called");
-                if !s.ends_with('\n') {
-                    s.push('\n');
-                }
-                queue.push_back(RuntimeEvent::StringToMud(s));
+                queue.push_cmd(s);
                 Ok(())
             })?;
             globals.set("Send", send)?;
@@ -231,10 +246,7 @@ impl Runtime {
             let queue = self.queue.clone();
             let note = lua_ctx.create_function(move |_, s: String| {
                 eprintln!("Note function called");
-                let sl = StyledLine::note(s);
-                let mut sls = VecDeque::new();
-                sls.push_back(sl);
-                queue.push_back(RuntimeEvent::DisplayLines(sls));
+                queue.push_line(Line::note(s));
                 Ok(())
             })?;
             globals.set("Note", note)?;

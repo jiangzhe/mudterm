@@ -1,47 +1,5 @@
-use std::sync::Arc;
-use tui::style::Style;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-
-/// 与tui::text::Span相似，可以在线程间传递
-#[derive(Debug, Clone, PartialEq)]
-pub struct ArcSpan {
-    content: Arc<str>,
-    pub style: Style,
-    pub ended: bool,
-}
-
-impl ArcSpan {
-
-    pub fn new(content: impl Into<String>, style: Style, ended: bool) -> Self {
-        Self{
-            content: Arc::from(content.into()),
-            style,
-            ended,
-        }
-    }
-
-    pub fn deep_copy(&self) -> Self {
-        Self::new(self.content.as_ref().to_owned(), self.style, self.ended)
-    }
-
-    #[inline]
-    pub fn content(&self) -> &str {
-        self.content.as_ref()
-    }
-
-    #[inline]
-    pub fn width(&self, cjk: bool) -> usize {
-        if cjk { self.content.width_cjk() } else { self.content.width() }
-    }
-
-    // 需要拷贝原字符串，但目前场景下并不常见
-    #[inline]
-    pub fn push_str(&mut self, s: &str) {
-        let mut content = self.content.as_ref().to_owned();
-        content.push_str(s);
-        self.content = Arc::from(content);
-    }
-}
+use crate::ui::span::ArcSpan;
+use unicode_width::UnicodeWidthChar;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Line {
@@ -61,6 +19,18 @@ impl Line {
         let mut lines= vec![];
         wrap_line(&self, max_width, cjk, &mut lines);
         WrapLine(lines)
+    }
+
+    pub fn note(content: impl Into<String>) -> Self {
+        Self{spans: vec![ArcSpan::note(content)]}
+    }
+
+    pub fn err(content: impl Into<String>) -> Self {
+        Self{spans: vec![ArcSpan::err(content)]}
+    }
+
+    pub fn raw(content: impl Into<String>) -> Self {
+        Self{spans: vec![ArcSpan::raw(content)]}
     }
 }
 
@@ -105,7 +75,7 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
             let new_style = span.style;
             let new_ended = span.ended;
             let mut new_content = String::new();
-            for c in span.content.chars() {
+            for c in span.content().chars() {
                 let cw = if cjk { c.width_cjk() } else { c.width() }.unwrap_or(0);
                 if curr_width + cw <= max_width {
                     new_content.push(c);
@@ -156,12 +126,7 @@ fn append_span(line: &mut Vec<ArcSpan>, span: ArcSpan) -> bool {
 mod tests {
 
     use super::*;
-    use tui::style::Color;
-
-    #[test]
-    fn test_invisible_chars() {
-        println!("0x21 width={}", '\x21'.width_cjk().unwrap_or(0));
-    }
+    use tui::style::{Style, Color};
 
     #[test]
     fn test_wrap_single_line() {

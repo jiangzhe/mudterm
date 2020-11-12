@@ -1,8 +1,13 @@
+pub mod flow;
+pub mod line;
+pub mod ansi;
+pub mod span;
+
 use crate::conf;
 use crate::error::Result;
-use crate::style::StyledLine;
+use line::Line;
+use flow::{MessageFlow, FlowBoard};
 use crossbeam_channel::Receiver;
-use std::collections::VecDeque;
 use std::io::{self, Stdout};
 use termion::event::{Key, MouseButton, MouseEvent};
 use termion::input::MouseTerminal;
@@ -11,12 +16,12 @@ use termion::screen::AlternateScreen;
 use tui::backend::{Backend, TermionBackend};
 use tui::layout::{Constraint, Direction, Layout};
 use tui::style::{Color, Style};
-use tui::text::Spans;
 use tui::widgets::{Block, Borders, Paragraph, Wrap};
 use tui::Terminal;
 
 pub struct RawScreen {
-    pub lines: Lines,
+    // pub lines: Lines,
+    pub flow: MessageFlow,
     pub command: String,
     pub script_prefix: char,
     pub script_mode: bool,
@@ -26,10 +31,11 @@ pub struct RawScreen {
 
 impl RawScreen {
     pub fn new(termconf: conf::Term) -> Self {
-        let mut lines = Lines::new();
-        lines.set_max_lines(termconf.max_lines);
+        let flow = MessageFlow::new()
+            .max_lines(termconf.max_lines as u32)
+            .cjk(true);
         Self {
-            lines,
+            flow,
             command: String::new(),
             script_prefix: '.',
             script_mode: false,
@@ -84,15 +90,11 @@ impl RawScreen {
                     eprintln!("unhandled key {:?}", k);
                 }
             },
-            RawScreenInput::Lines(sms) => {
-                self.lines.push_lines(sms);
+            RawScreenInput::Lines(lines) => {
+                self.flow.push_lines(lines);
             }
-            RawScreenInput::Line(sm) => {
-                if !self.lines.is_last_line_ended() {
-                    self.lines.append_to_last_line(sm);
-                } else {
-                    self.lines.push_line(sm);
-                }
+            RawScreenInput::Line(line) => {
+                self.flow.push_line(line)
             }
             RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelUp, ..))
                 if !self.auto_follow =>
@@ -121,8 +123,8 @@ impl RawScreen {
 fn draw_terminal<B: Backend>(screen: &mut RawScreen, terminal: &mut Terminal<B>) -> Result<()> {
     terminal.draw(|f| {
         // with border
-        let server_board_height = f.size().height as usize - 3;
-        let server_board_width = f.size().width - 3;
+        let server_board_height = f.size().height as usize - 2;
+        // let server_board_width = f.size().width - 3;
         // let server_max_lines = server_board_height - 2;
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -130,25 +132,14 @@ fn draw_terminal<B: Backend>(screen: &mut RawScreen, terminal: &mut Terminal<B>)
             .constraints(
                 [
                     Constraint::Length(server_board_height as u16),
-                    Constraint::Length(3),
+                    Constraint::Length(2),
                 ]
                 .as_ref(),
             )
             .split(f.size());
         // server board
-        let text = screen.lines.lastn_with_width(5000, server_board_width);
-        if screen.auto_follow {
-            if server_board_height >= text.len() + 2 {
-                screen.scroll.0 = 0;
-            } else {
-                screen.scroll.0 = (text.len() + 2 - server_board_height) as u16;
-            }
-        }
-        let paragraph = Paragraph::new(text)
-            .style(Style::default())
-            .scroll(screen.scroll)
-            .block(Block::default().title("Server").borders(Borders::ALL));
-        f.render_widget(paragraph, chunks[0]);
+        let board = FlowBoard::new(&screen.flow, Block::default().title(" ").borders(Borders::NONE), Style::default());
+        f.render_widget(board, chunks[0]);
         // user input
         let mut cmd_style = Style::default();
         if screen.script_mode {
@@ -156,8 +147,8 @@ fn draw_terminal<B: Backend>(screen: &mut RawScreen, terminal: &mut Terminal<B>)
         }
         let cmd = Paragraph::new(screen.command.as_ref())
             .style(cmd_style)
-            .block(Block::default().borders(Borders::ALL).title("Command"))
-            .wrap(Wrap { trim: false });
+            .block(Block::default().borders(Borders::NONE).title(" "));
+            // .wrap(Wrap { trim: false });
         f.render_widget(cmd, chunks[1]);
     })?;
     Ok(())
@@ -183,101 +174,12 @@ pub fn init_terminal(
 
 #[derive(Debug, Clone)]
 pub enum RawScreenInput {
-    Line(StyledLine),
-    Lines(VecDeque<StyledLine>),
+    // Line(StyledLine),
+    Line(Line),
+    // Lines(VecDeque<StyledLine>),
+    Lines(Vec<Line>),
     Key(Key),
     Tick,
     WindowResize,
     Mouse(MouseEvent),
-}
-
-pub struct Lines {
-    buffer: VecDeque<StyledLine>,
-    max_lines: usize,
-}
-
-impl Lines {
-    pub fn new() -> Self {
-        Self {
-            buffer: VecDeque::new(),
-            max_lines: 5000,
-        }
-    }
-
-    pub fn set_max_lines(&mut self, max_lines: usize) {
-        self.max_lines = max_lines;
-    }
-
-    pub fn len(&self) -> usize {
-        self.buffer.len()
-    }
-
-    pub fn is_last_line_ended(&self) -> bool {
-        if let Some(last_buf) = self.buffer.back() {
-            return last_buf.ended;
-        }
-        true
-    }
-
-    pub fn append_to_last_line(&mut self, line: StyledLine) {
-        let last_buf = self.buffer.back_mut().unwrap();
-        last_buf.spans.extend(line.spans);
-        last_buf.orig.push_str(&line.orig);
-        last_buf.ended = line.ended;
-    }
-
-    pub fn push_line(&mut self, line: StyledLine) {
-        if self.buffer.len() == self.max_lines {
-            self.buffer.pop_front();
-        }
-        self.buffer.push_back(line);
-    }
-
-    pub fn push_lines(&mut self, mut lines: VecDeque<StyledLine>) {
-        if lines.is_empty() {
-            return;
-        }
-        let first_line = lines.pop_front().unwrap();
-        if !self.is_last_line_ended() {
-            self.append_to_last_line(first_line);
-        } else {
-            self.push_line(first_line);
-        }
-        for line in lines {
-            self.push_line(line);
-        }
-    }
-
-    pub fn lastn(&self, n: usize) -> Vec<Spans<'static>> {
-        if self.buffer.len() <= n {
-            self.buffer
-                .iter()
-                .map(|m| Spans::from(m.spans.clone()))
-                .collect()
-        } else {
-            self.buffer
-                .iter()
-                .skip(self.buffer.len() - n)
-                .map(|m| Spans::from(m.spans.clone()))
-                .collect()
-        }
-    }
-
-    /// lines with larger width will be splited
-    pub fn lastn_with_width(&self, n: usize, max_width: u16) -> Vec<Spans<'static>> {
-        let mut iter = self.buffer.iter().cloned();
-        let mut lineno = 0;
-        let mut reversed = Vec::new();
-        'outer: while let Some(sl) = iter.next_back() {
-            let mut split_iter = sl.split_with_max_width(max_width).into_iter();
-            while let Some(line) = split_iter.next_back() {
-                reversed.push(Spans(line));
-                lineno += 1;
-                if lineno == n {
-                    break 'outer;
-                }
-            }
-        }
-        reversed.into_iter().rev().collect()
-    }
 }

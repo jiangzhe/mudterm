@@ -4,10 +4,10 @@ use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, Run
 use crate::protocol::Packet;
 use crate::runtime::Runtime;
 use crate::signal;
-use crate::style::StyledLine;
 use crate::ui::init_terminal;
 use crate::ui::{RawScreen, RawScreenCallback, RawScreenInput};
 use crate::userinput;
+use crate::ui::line::Line;
 use crossbeam_channel::{unbounded, Sender};
 use std::{io, thread};
 
@@ -110,19 +110,15 @@ pub fn start_from_server_handle(
                     evttx.send(Event::ServerDown).unwrap();
                     return;
                 }
-                Ok(Packet::StyledText(line, ended)) => {
+                Ok(Packet::Spans(spans)) => {
                     // here the original text is already processed by server,
                     // so may be not identical to original text sent from MUD
-                    let orig = line.iter().fold(String::new(), |mut s, acc| {
-                        s.push_str(&acc.content);
+                    let orig = spans.iter().fold(String::new(), |mut s, acc| {
+                        s.push_str(acc.content());
                         s
                     });
                     evttx
-                        .send(Event::StyledLineFromServer(StyledLine {
-                            spans: line,
-                            orig,
-                            ended,
-                        }))
+                        .send(Event::SpansFromServer(spans))
                         .unwrap();
                 }
                 Ok(_) => (),
@@ -161,8 +157,8 @@ impl EventHandler for Client {
                 self.uitx.send(RawScreenInput::WindowResize)?;
             }
             // 以下事件交给运行时处理
-            Event::StyledLineFromServer(line) => {
-                rt.process_mud_line(line);
+            Event::SpansFromServer(spans) => {
+                rt.process_mud_spans(spans);
             }
             Event::UserInputLine(cmd) => {
                 rt.preprocess_user_cmd(cmd);
@@ -173,9 +169,7 @@ impl EventHandler for Client {
             Event::ServerDown => {
                 eprintln!("server down or not reachable");
                 // let user quit
-                let err_line =
-                    StyledLine::err(String::from("与服务器断开了连接，请关闭并重新连接"));
-                rt.queue.push_styled_line(err_line);
+                rt.queue.push_line(Line::err("与服务器断开了连接，请关闭并重新连接"));
             }
             // client模式不支持客户端连接
             Event::NewClient(..)
@@ -184,7 +178,7 @@ impl EventHandler for Client {
             | Event::ClientDisconnect
             | Event::TelnetBytesToMud(_)
             | Event::BytesFromMud(_)
-            | Event::StyledLinesFromMud(_) => {
+            | Event::SpansFromMud(_) => {
                 unreachable!("standalone mode does not support event {:?}", evt);
             }
         }
@@ -203,7 +197,7 @@ impl RuntimeEventHandler for Client {
                 self.srvtx.send(Packet::Text(s))?;
             }
             RuntimeEvent::DisplayLines(lines) => {
-                self.uitx.send(RawScreenInput::Lines(lines))?;
+                self.uitx.send(RawScreenInput::Lines(lines.0))?;
             }
         }
         Ok(NextStep::Run)

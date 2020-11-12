@@ -1,9 +1,9 @@
 use crate::error::{Error, Result};
+use crate::ui::span::ArcSpan;
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use std::io::Cursor;
 use std::io::{Read, Write};
 use tui::style::{Color, Modifier, Style};
-use tui::text::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
@@ -11,7 +11,7 @@ pub enum Packet {
     AuthReq(Vec<u8>),
     AuthResp(Vec<u8>),
     Text(String),
-    StyledText(Vec<Span<'static>>, bool),
+    Spans(Vec<ArcSpan>),
     Err(String),
 }
 
@@ -22,7 +22,7 @@ impl Packet {
             Self::AuthReq(_) => 0x01,
             Self::AuthResp(_) => 0x02,
             Self::Text(_) => 0x03,
-            Self::StyledText(..) => 0x04,
+            Self::Spans(..) => 0x04,
             Self::Err(_) => 0xff,
         }
     }
@@ -32,7 +32,7 @@ impl Packet {
             Self::Ok => vec![],
             Self::AuthReq(bs) | Self::AuthResp(bs) => bs,
             Self::Text(s) | Self::Err(s) => s.into_bytes(),
-            Self::StyledText(spans, ended) => encode_styled_text(spans, ended).unwrap(),
+            Self::Spans(spans) => encode_styled_text(spans).unwrap(),
         }
     }
 
@@ -50,8 +50,8 @@ impl Packet {
             0x02 => Self::AuthResp(bs),
             0x03 => Self::Text(String::from_utf8(bs)?),
             0x04 => {
-                let (spans, ended) = decode_styled_text(&bs)?;
-                Self::StyledText(spans, ended)
+                let spans = decode_styled_text(&bs)?;
+                Self::Spans(spans)
             }
             header => {
                 return Err(Error::DecodeError(format!(
@@ -81,10 +81,10 @@ impl Packet {
 
 /// payload of styled text
 /// |1-byte ended|4-byte n_spans|1-byte fg|1-byte bg|2-byte add_modifier|2-byte sub_modifier|4-byte strlen|n-byte str|...
-fn decode_styled_text(src: &[u8]) -> Result<(Vec<Span<'static>>, bool)> {
+fn decode_styled_text(src: &[u8]) -> Result<Vec<ArcSpan>> {
     let mut cursor = Cursor::new(src);
-    let ended = cursor.read_u8()?;
-    let ended = ended != 0x00;
+    // let ended = cursor.read_u8()?;
+    // let ended = ended != 0x00;
     let n_spans = cursor.read_u32::<LE>()?;
     let mut spans = Vec::with_capacity(n_spans as usize);
     for _ in 0..n_spans {
@@ -98,10 +98,12 @@ fn decode_styled_text(src: &[u8]) -> Result<(Vec<Span<'static>>, bool)> {
         let sub_modifier = cursor.read_u16::<LE>()?;
         let sub_modifier = Modifier::from_bits(sub_modifier)
             .ok_or_else(|| Error::DecodeError("invalid sub_modifier".to_owned()))?;
+        let ended = cursor.read_u8()?;
+        let ended = ended != 0x00;
         let len = cursor.read_u32::<LE>()?;
         let mut content = vec![0u8; len as usize];
         cursor.read_exact(&mut content[..])?;
-        spans.push(Span::styled(
+        spans.push(ArcSpan::new(
             String::from_utf8(content)?,
             Style {
                 fg,
@@ -109,18 +111,14 @@ fn decode_styled_text(src: &[u8]) -> Result<(Vec<Span<'static>>, bool)> {
                 add_modifier,
                 sub_modifier,
             },
+            ended,
         ));
     }
-    Ok((spans, ended))
+    Ok(spans)
 }
 
-fn encode_styled_text(spans: Vec<Span<'static>>, ended: bool) -> Result<Vec<u8>> {
+fn encode_styled_text(spans: Vec<ArcSpan>) -> Result<Vec<u8>> {
     let mut bs = Vec::new();
-    if ended {
-        bs.write_all(&[0x01])?;
-    } else {
-        bs.write_all(&[0x00])?;
-    }
     let n_spans = spans.len() as u32;
     bs.write_u32::<LE>(n_spans)?;
     for span in spans {
@@ -132,9 +130,14 @@ fn encode_styled_text(spans: Vec<Span<'static>>, ended: bool) -> Result<Vec<u8>>
         bs.write_u16::<LE>(add_modifier)?;
         let sub_modifier = span.style.sub_modifier.bits();
         bs.write_u16::<LE>(sub_modifier)?;
-        let len = span.content.len() as u32;
+        if span.ended {
+            bs.write_all(&[0x01])?;
+        } else {
+            bs.write_all(&[0x00])?;
+        }
+        let len = span.content().len() as u32;
         bs.write_u32::<LE>(len)?;
-        bs.write_all(span.content.as_bytes())?;
+        bs.write_all(span.content().as_bytes())?;
     }
     Ok(bs)
 }

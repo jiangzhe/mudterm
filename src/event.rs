@@ -1,7 +1,8 @@
 use crate::codec::Codec;
 use crate::error::Result;
 use crate::runtime::Runtime;
-use crate::style::StyledLine;
+use crate::ui::line::Line;
+use crate::ui::span::ArcSpan;
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::VecDeque;
 use std::net::{SocketAddr, TcpStream};
@@ -15,7 +16,8 @@ pub enum Event {
     /// handle codec switching peacefully
     BytesFromMud(Vec<u8>),
     /// lines from server with tui style
-    StyledLinesFromMud(VecDeque<StyledLine>),
+    // StyledLinesFromMud(VecDeque<StyledLine>),
+    SpansFromMud(Vec<ArcSpan>),
     /// user input line
     UserInputLine(String),
     /// user script line will be sent to script
@@ -40,7 +42,7 @@ pub enum Event {
     // server down
     ServerDown,
     // lines from server with tui style
-    StyledLineFromServer(StyledLine),
+    SpansFromServer(Vec<ArcSpan>),
     // terminal key event
     TerminalKey(Key),
     // terminal mouse event
@@ -57,7 +59,35 @@ pub enum RuntimeEvent {
     /// string which is to be sent to server
     StringToMud(String),
     /// lines from server or script to display
-    DisplayLines(VecDeque<StyledLine>),
+    DisplayLines(DisplayLines),
+}
+
+#[derive(Debug, Clone)]
+pub struct DisplayLines(pub Vec<Line>);
+
+impl DisplayLines {
+
+    pub fn push_span(&mut self, span: ArcSpan) {
+        if let Some(last_line) = self.0.last_mut() {
+            if !last_line.ended() {
+                last_line.spans.push(span);
+                return;
+            }
+        }
+        // empty lines
+        self.0.push(Line::new(vec![span]));
+    }
+
+    pub fn push_line(&mut self, line: Line) {
+        if let Some(last_line) = self.0.last_mut() {
+            if !last_line.ended() {
+                last_line.spans.extend(line.spans);
+                return;
+            }
+        }
+        // empty lines
+        self.0.push(line);
+    }
 }
 
 /// 事件总线
@@ -72,18 +102,24 @@ impl EventQueue {
         Self(Arc::new(Mutex::new(VecDeque::new())))
     }
 
-    pub fn push_styled_line(&self, line: StyledLine) {
+    pub fn push_span(&self, span: ArcSpan) {
         let mut evtq = self.0.lock().unwrap();
         if let Some(RuntimeEvent::DisplayLines(lines)) = evtq.back_mut() {
-            lines.push_back(line);
+            lines.push_span(span);
             return;
         }
-        let mut lines = VecDeque::new();
-        lines.push_back(line);
-        evtq.push_back(RuntimeEvent::DisplayLines(lines));
+        evtq.push_back(RuntimeEvent::DisplayLines(DisplayLines(vec![Line::new(vec![span])])));
     }
 
-    pub fn push_mud_string(&self, cmd: String) {
+    pub fn push_line(&self, line: Line) {
+        let mut evtq = self.0.lock().unwrap();
+        if let Some(RuntimeEvent::DisplayLines(lines)) = evtq.back_mut() {
+            lines.push_line(line);
+            return;
+        }
+    }
+
+    pub fn push_cmd(&self, cmd: String) {
         let mut evtq = self.0.lock().unwrap();
         if let Some(RuntimeEvent::StringToMud(s)) = evtq.back_mut() {
             if !s.ends_with('\n') {
@@ -99,7 +135,7 @@ impl EventQueue {
         self.0.lock().unwrap().drain(..).collect()
     }
 
-    pub fn push_back(&self, re: RuntimeEvent) {
+    pub fn push(&self, re: RuntimeEvent) {
         self.0.lock().unwrap().push_back(re);
     }
 }
