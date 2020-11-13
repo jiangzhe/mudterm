@@ -1,9 +1,9 @@
-use tui::widgets::{Widget, Block};
-use tui::layout::Rect;
-use tui::buffer::Buffer;
-use tui::style::Style;
+// use tui::widgets::{Widget, Block};
+// use tui::layout::Rect;
+// use tui::buffer::Buffer;
+// use tui::style::Style;
 use std::collections::VecDeque;
-use crate::ui::line::Line;
+use crate::ui::line::RawLine;
 use crate::ui::span::ArcSpan;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -18,7 +18,7 @@ pub struct MessageFlow {
     scroll: u16,
     // 关闭开启自动跟踪将通过调整scroll卯定在某一行
     auto_follow: bool,
-    text: VecDeque<Line>,
+    text: VecDeque<RawLine>,
     max_lines: u32,
     cjk: bool,
 }

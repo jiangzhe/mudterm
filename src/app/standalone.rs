@@ -44,8 +44,8 @@ impl EventHandler for Standalone {
             Event::BytesFromMud(bs) => {
                 rt.process_bytes_from_mud(&bs)?;
             }
-            Event::SpansFromMud(spans) => {
-                rt.process_mud_spans(spans);
+            Event::LinesFromMud(lines) => {
+                rt.process_mud_lines(lines);
             }
             Event::UserInputLine(cmd) => {
                 rt.preprocess_user_cmd(cmd);
@@ -58,7 +58,7 @@ impl EventHandler for Standalone {
             | Event::ClientAuthFail
             | Event::ClientAuthSuccess(_)
             | Event::ClientDisconnect
-            | Event::SpansFromServer(_)
+            | Event::LinesFromServer(_)
             | Event::ServerDown => unreachable!("standalone mode does not support event {:?}", evt),
         }
         Ok(NextStep::Run)
@@ -79,7 +79,7 @@ impl RuntimeEventHandler for Standalone {
                 self.worldtx.send(bs)?;
             }
             RuntimeEvent::DisplayLines(lines) => {
-                self.uitx.send(RawScreenInput::Lines(lines.0))?;
+                self.uitx.send(RawScreenInput::Lines(lines.into_vec()))?;
             }
         }
         Ok(NextStep::Run)

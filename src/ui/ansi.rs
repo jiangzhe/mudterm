@@ -1,5 +1,5 @@
 use crate::ui::span::ArcSpan;
-use tui::style::{Style, Color, Modifier};
+use crate::ui::style::{Style, Color, Modifier};
 
 #[derive(Debug)]
 /// 将ansi字符流转换为ArcSpan流

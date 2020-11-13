@@ -2,7 +2,7 @@ use crate::error::{Error, Result};
 use encoding::codec::simpchinese::GB18030_ENCODING;
 use encoding::codec::tradchinese::BigFive2003Encoding;
 use encoding::codec::utf_8::UTF8Decoder;
-use encoding::types::{CodecError, RawDecoder, StringWriter};
+use encoding::types::{CodecError, RawDecoder};
 use encoding::{EncoderTrap, Encoding};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -31,14 +31,9 @@ impl Decoder {
         &mut self,
         input: impl AsRef<[u8]>,
         output: &mut String,
-        remove_carriage: bool,
+        // remove_carriage: bool,
     ) -> (usize, Option<CodecError>) {
-        if remove_carriage {
-            self.0
-                .raw_feed(input.as_ref(), &mut RemoveCarriageWriter(output))
-        } else {
-            self.0.raw_feed(input.as_ref(), output)
-        }
+        self.0.raw_feed(input.as_ref(), output)
     }
 
     pub fn switch_codec(&mut self, code: Codec) {
@@ -46,29 +41,6 @@ impl Decoder {
             Codec::Gb18030 => self.0 = GB18030_ENCODING.raw_decoder(),
             Codec::Utf8 => self.0 = UTF8Decoder::new(),
             Codec::Big5 => self.0 = BigFive2003Encoding.raw_decoder(),
-        }
-    }
-}
-
-struct RemoveCarriageWriter<'a>(&'a mut String);
-
-impl<'a> StringWriter for RemoveCarriageWriter<'a> {
-    #[inline]
-    fn writer_hint(&mut self, _expectedlen: usize) {
-        self.0.reserve(_expectedlen);
-    }
-
-    #[inline]
-    fn write_char(&mut self, c: char) {
-        if c != '\r' {
-            self.0.write_char(c);
-        }
-    }
-
-    #[inline]
-    fn write_str(&mut self, s: &str) {
-        for c in s.chars() {
-            self.write_char(c);
         }
     }
 }
@@ -124,10 +96,10 @@ impl MudCodec {
         self.encoder.switch_codec(code);
     }
 
-    pub fn decode(&mut self, bs: &[u8], remove_carriage: bool) -> String {
+    pub fn decode(&mut self, bs: &[u8]) -> String {
         // let bs = self.ansi_buf.process(bs);
         let mut s = String::new();
-        let _ = self.decoder.decode_raw_to(bs, &mut s, remove_carriage);
+        let _ = self.decoder.decode_raw_to(bs, &mut s);
         s
     }
 
@@ -156,10 +128,10 @@ mod tests {
         let mut mc = MudCodec::new();
         mc.switch_codec(Codec::Utf8);
         let bs = b"hello\x21[37;".to_vec();
-        let s = mc.decode(&bs, false);
+        let s = mc.decode(&bs);
         assert_eq!(&s[..], "hello");
         let bs = b"1mworld".to_vec();
-        let s = mc.decode(&bs, false);
+        let s = mc.decode(&bs);
         assert_eq!(&s[..], "\x21[37;1mworld");
     }
 }

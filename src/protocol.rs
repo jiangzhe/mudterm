@@ -1,9 +1,9 @@
 use crate::error::{Error, Result};
-use crate::ui::span::ArcSpan;
+use crate::ui::line::RawLine;
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use std::io::Cursor;
 use std::io::{Read, Write};
-use tui::style::{Color, Modifier, Style};
+use crate::ui::style::Color;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
@@ -11,7 +11,7 @@ pub enum Packet {
     AuthReq(Vec<u8>),
     AuthResp(Vec<u8>),
     Text(String),
-    Spans(Vec<ArcSpan>),
+    Lines(Vec<RawLine>),
     Err(String),
 }
 
@@ -22,7 +22,7 @@ impl Packet {
             Self::AuthReq(_) => 0x01,
             Self::AuthResp(_) => 0x02,
             Self::Text(_) => 0x03,
-            Self::Spans(..) => 0x04,
+            Self::Lines(..) => 0x04,
             Self::Err(_) => 0xff,
         }
     }
@@ -32,7 +32,7 @@ impl Packet {
             Self::Ok => vec![],
             Self::AuthReq(bs) | Self::AuthResp(bs) => bs,
             Self::Text(s) | Self::Err(s) => s.into_bytes(),
-            Self::Spans(spans) => encode_styled_text(spans).unwrap(),
+            Self::Lines(lines) => encode_lines(lines).unwrap(),
         }
     }
 
@@ -50,8 +50,8 @@ impl Packet {
             0x02 => Self::AuthResp(bs),
             0x03 => Self::Text(String::from_utf8(bs)?),
             0x04 => {
-                let spans = decode_styled_text(&bs)?;
-                Self::Spans(spans)
+                let lines = decode_lines(&bs)?;
+                Self::Lines(lines)
             }
             header => {
                 return Err(Error::DecodeError(format!(
@@ -79,69 +79,33 @@ impl Packet {
     }
 }
 
-/// payload of styled text
-/// |1-byte ended|4-byte n_spans|1-byte fg|1-byte bg|2-byte add_modifier|2-byte sub_modifier|4-byte strlen|n-byte str|...
-fn decode_styled_text(src: &[u8]) -> Result<Vec<ArcSpan>> {
+/// payload of raw lines
+fn decode_lines(src: &[u8]) -> Result<Vec<RawLine>> {
     let mut cursor = Cursor::new(src);
-    // let ended = cursor.read_u8()?;
-    // let ended = ended != 0x00;
-    let n_spans = cursor.read_u32::<LE>()?;
-    let mut spans = Vec::with_capacity(n_spans as usize);
-    for _ in 0..n_spans {
-        let fg = cursor.read_u8()?;
-        let fg = num_to_color(fg);
-        let bg = cursor.read_u8()?;
-        let bg = num_to_color(bg);
-        let add_modifier = cursor.read_u16::<LE>()?;
-        let add_modifier = Modifier::from_bits(add_modifier)
-            .ok_or_else(|| Error::DecodeError("invalid add_modifier".to_owned()))?;
-        let sub_modifier = cursor.read_u16::<LE>()?;
-        let sub_modifier = Modifier::from_bits(sub_modifier)
-            .ok_or_else(|| Error::DecodeError("invalid sub_modifier".to_owned()))?;
-        let ended = cursor.read_u8()?;
-        let ended = ended != 0x00;
+    let n_lines = cursor.read_u32::<LE>()?;
+    let mut lines = Vec::with_capacity(n_lines as usize);
+    for _ in 0..n_lines {
         let len = cursor.read_u32::<LE>()?;
         let mut content = vec![0u8; len as usize];
         cursor.read_exact(&mut content[..])?;
-        spans.push(ArcSpan::new(
-            String::from_utf8(content)?,
-            Style {
-                fg,
-                bg,
-                add_modifier,
-                sub_modifier,
-            },
-            ended,
-        ));
+        lines.push(RawLine::owned(String::from_utf8(content)?));
     }
-    Ok(spans)
+    Ok(lines)
 }
 
-fn encode_styled_text(spans: Vec<ArcSpan>) -> Result<Vec<u8>> {
+fn encode_lines(lines: Vec<RawLine>) -> Result<Vec<u8>> {
     let mut bs = Vec::new();
-    let n_spans = spans.len() as u32;
-    bs.write_u32::<LE>(n_spans)?;
-    for span in spans {
-        let fg = color_to_num(span.style.fg);
-        bs.write_u8(fg)?;
-        let bg = color_to_num(span.style.bg);
-        bs.write_u8(bg)?;
-        let add_modifier = span.style.add_modifier.bits();
-        bs.write_u16::<LE>(add_modifier)?;
-        let sub_modifier = span.style.sub_modifier.bits();
-        bs.write_u16::<LE>(sub_modifier)?;
-        if span.ended {
-            bs.write_all(&[0x01])?;
-        } else {
-            bs.write_all(&[0x00])?;
-        }
-        let len = span.content().len() as u32;
+    let n_lines = lines.len() as u32;
+    bs.write_u32::<LE>(n_lines)?;
+    for line in lines {
+        let len = line.len() as u32;
         bs.write_u32::<LE>(len)?;
-        bs.write_all(span.content().as_bytes())?;
+        bs.write_all(line.as_ref().as_bytes())?;
     }
     Ok(bs)
 }
 
+#[allow(dead_code)]
 fn num_to_color(n: u8) -> Option<Color> {
     match n {
         0 => None,
@@ -166,6 +130,7 @@ fn num_to_color(n: u8) -> Option<Color> {
     }
 }
 
+#[allow(dead_code)]
 fn color_to_num(color: Option<Color>) -> u8 {
     match color {
         None => 0,

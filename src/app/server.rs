@@ -4,7 +4,8 @@ use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, Run
 use crate::protocol::Packet;
 use crate::runtime::Runtime;
 use crate::transport::{Telnet, TelnetEvent, Outbound};
-use crate::ui::flow::MessageFlow;
+// use crate::ui::flow::MessageFlow;
+use crate::ui::line::RawLineBuffer;
 use crossbeam_channel::{unbounded, Sender};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::time::Duration;
@@ -131,17 +132,17 @@ fn start_from_client_handle(mut conn: TcpStream, evttx: Sender<Event>) {
 pub struct Server {
     worldtx: Sender<Vec<u8>>,
     pass: String,
-    flow: MessageFlow,
+    buffer: RawLineBuffer,
     to_cli: Option<(Sender<Packet>, SocketAddr)>,
 }
 
 impl Server {
     pub fn new(worldtx: Sender<Vec<u8>>, pass: String, init_max_lines: usize) -> Self {
-        let flow = MessageFlow::new().max_lines(init_max_lines as u32).cjk(true);
+        let buffer = RawLineBuffer::with_capacity(init_max_lines);
         Self {
             worldtx,
             pass,
-            flow,
+            buffer,
             to_cli: None,
         }
     }
@@ -170,9 +171,9 @@ impl EventHandler for Server {
             Event::ClientAuthSuccess(mut conn) => {
                 eprintln!("client auth succeeded, starting thread to handle incoming messages");
                 // let lastn = self.line_cache.lastn(50000);
-                let spans = self.flow.all_spans();
+                let lines = self.buffer.to_vec();
                 // todo: separate multiple batch
-                let pkt = Packet::Spans(spans);
+                let pkt = Packet::Lines(lines);
                 if let Err(e) = pkt.write_to(&mut conn) {
                     eprintln!("channel send client style text error {}", e);
                     // maybe client disconnected, discard this connection
@@ -192,8 +193,8 @@ impl EventHandler for Server {
             Event::BytesFromMud(bs) => {
                 rt.process_bytes_from_mud(&bs)?;
             }
-            Event::SpansFromMud(spans) => {
-                rt.process_mud_spans(spans);
+            Event::LinesFromMud(lines) => {
+                rt.process_mud_lines(lines);
             }
             Event::UserInputLine(cmd) => {
                 rt.preprocess_user_cmd(cmd);
@@ -201,7 +202,7 @@ impl EventHandler for Server {
             Event::Tick => {
                 // todo: implements trigger by tick
             }
-            Event::SpansFromServer(_)
+            Event::LinesFromServer(_)
             | Event::TerminalKey(_)
             | Event::TerminalMouse(_)
             | Event::WindowResize
@@ -227,8 +228,8 @@ impl RuntimeEventHandler for Server {
             }
             RuntimeEvent::DisplayLines(lines) => {
                 if let Some((clitx, _)) = self.to_cli.as_mut() {
-                    let spans = lines.0.into_iter().flat_map(|line| line.spans).collect();
-                    if let Err(e) = clitx.send(Packet::Spans(spans)) {
+                    let lines = lines.into_vec();
+                    if let Err(e) = clitx.send(Packet::Lines(lines)) {
                         eprintln!("channel send to-client message error {}", e);
                     }
                 }

@@ -1,5 +1,121 @@
 use crate::ui::span::ArcSpan;
 use unicode_width::UnicodeWidthChar;
+use std::sync::Arc;
+use std::collections::VecDeque;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RawLine {
+    Owned(String),
+    Ref(Arc<str>, usize, usize),
+}
+
+impl RawLine {
+
+    pub fn owned(line: String) -> Self {
+        Self::Owned(line)
+    }
+
+    pub fn borrowed(line: Arc<str>, start: usize, end: usize) -> Self {
+        debug_assert!(end >= start);
+        Self::Ref(line, start, end)
+    }
+
+    pub fn err(line: impl AsRef<str>) -> Self {
+        let formatted = format!("{}{}{}\r\n", termion::style::Invert, line.as_ref(), termion::style::Reset);
+        Self::Owned(formatted)
+    }
+
+    pub fn note(line: impl AsRef<str>) -> Self {
+        let formatted = format!("{}{}{}\r\n", termion::color::Fg(termion::color::LightBlue), line.as_ref(), termion::style::Reset);
+        Self::Owned(formatted)
+    }
+
+    pub fn raw(line: impl AsRef<str>) -> Self {
+        let formatted = format!("{}{}\r\n", termion::style::Reset, line.as_ref());
+        Self::Owned(formatted)
+    }
+
+    pub fn ended(&self) -> bool {
+        match self {
+            Self::Owned(s) => s.ends_with('\n'),
+            Self::Ref(s, start, end) => s.as_ref()[*start..*end].ends_with('\n'),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Owned(s) => s.len(),
+            Self::Ref(_, start, end) => *end - *start,
+        }
+    }
+
+    pub fn push_line(&mut self, line: impl AsRef<str>) {
+        let mut s = match self {
+            Self::Owned(s) => {
+                s.push_str(line.as_ref());
+                return;
+            },
+            Self::Ref(s, start, end) => s.as_ref()[*start..*end].to_owned(),
+        };
+        s.push_str(line.as_ref());
+        *self = Self::Owned(s);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RawLineBuffer {
+    lines: VecDeque<RawLine>,
+    capacity: usize,
+}
+
+impl RawLineBuffer {
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            lines: VecDeque::new(),
+            capacity,
+        }
+    }
+
+    pub fn unbounded() -> Self {
+        Self::with_capacity(0)
+    }
+
+    pub fn push_line(&mut self, line: RawLine) {
+        if let Some(last_line) = self.lines.back_mut() {
+            if !last_line.ended() {
+                last_line.push_line(line);
+                return;
+            }
+        }
+        // empty lines
+        self.lines.push_back(line);
+        while self.capacity > 0 && self.capacity > self.lines.len() {
+            self.lines.pop_front();
+        }
+    }
+
+    pub fn into_inner(self) -> VecDeque<RawLine> {
+        self.lines
+    }
+
+    pub fn to_vec(&self) -> Vec<RawLine> {
+        self.lines.iter().cloned().collect()
+    }
+
+    pub fn into_vec(self) -> Vec<RawLine> {
+        self.lines.into_iter().collect()
+    }
+}
+
+impl AsRef<str> for RawLine {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Owned(s) => s,
+            Self::Ref(s, start, end) => &s.as_ref()[*start..*end],
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Line {
@@ -126,7 +242,7 @@ fn append_span(line: &mut Vec<ArcSpan>, span: ArcSpan) -> bool {
 mod tests {
 
     use super::*;
-    use tui::style::{Style, Color};
+    use crate::ui::style::{Style, Color};
 
     #[test]
     fn test_wrap_single_line() {

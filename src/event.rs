@@ -1,7 +1,7 @@
 use crate::codec::Codec;
 use crate::error::Result;
 use crate::runtime::Runtime;
-use crate::ui::line::Line;
+use crate::ui::line::{RawLine, RawLineBuffer};
 use crate::ui::span::ArcSpan;
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::VecDeque;
@@ -17,7 +17,7 @@ pub enum Event {
     BytesFromMud(Vec<u8>),
     /// lines from server with tui style
     // StyledLinesFromMud(VecDeque<StyledLine>),
-    SpansFromMud(Vec<ArcSpan>),
+    LinesFromMud(Vec<RawLine>),
     /// user input line
     UserInputLine(String),
     /// user script line will be sent to script
@@ -42,7 +42,7 @@ pub enum Event {
     // server down
     ServerDown,
     // lines from server with tui style
-    SpansFromServer(Vec<ArcSpan>),
+    LinesFromServer(Vec<RawLine>),
     // terminal key event
     TerminalKey(Key),
     // terminal mouse event
@@ -59,35 +59,7 @@ pub enum RuntimeEvent {
     /// string which is to be sent to server
     StringToMud(String),
     /// lines from server or script to display
-    DisplayLines(DisplayLines),
-}
-
-#[derive(Debug, Clone)]
-pub struct DisplayLines(pub Vec<Line>);
-
-impl DisplayLines {
-
-    pub fn push_span(&mut self, span: ArcSpan) {
-        if let Some(last_line) = self.0.last_mut() {
-            if !last_line.ended() {
-                last_line.spans.push(span);
-                return;
-            }
-        }
-        // empty lines
-        self.0.push(Line::new(vec![span]));
-    }
-
-    pub fn push_line(&mut self, line: Line) {
-        if let Some(last_line) = self.0.last_mut() {
-            if !last_line.ended() {
-                last_line.spans.extend(line.spans);
-                return;
-            }
-        }
-        // empty lines
-        self.0.push(line);
-    }
+    DisplayLines(RawLineBuffer),
 }
 
 /// 事件总线
@@ -102,21 +74,24 @@ impl EventQueue {
         Self(Arc::new(Mutex::new(VecDeque::new())))
     }
 
-    pub fn push_span(&self, span: ArcSpan) {
-        let mut evtq = self.0.lock().unwrap();
-        if let Some(RuntimeEvent::DisplayLines(lines)) = evtq.back_mut() {
-            lines.push_span(span);
-            return;
-        }
-        evtq.push_back(RuntimeEvent::DisplayLines(DisplayLines(vec![Line::new(vec![span])])));
-    }
+    // pub fn push_span(&self, span: ArcSpan) {
+    //     let mut evtq = self.0.lock().unwrap();
+    //     if let Some(RuntimeEvent::DisplayLines(lines)) = evtq.back_mut() {
+    //         lines.push_span(span);
+    //         return;
+    //     }
+    //     evtq.push_back(RuntimeEvent::DisplayLines(DisplayLines(vec![Line::new(vec![span])])));
+    // }
 
-    pub fn push_line(&self, line: Line) {
+    pub fn push_line(&self, line: RawLine) {
         let mut evtq = self.0.lock().unwrap();
         if let Some(RuntimeEvent::DisplayLines(lines)) = evtq.back_mut() {
             lines.push_line(line);
             return;
         }
+        let mut lines = RawLineBuffer::unbounded();
+        lines.push_line(line);
+        evtq.push_back(RuntimeEvent::DisplayLines(lines));
     }
 
     pub fn push_cmd(&self, cmd: String) {

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tui::style::{Style, Color, Modifier};
+use crate::ui::style::{Style, Color, Modifier};
 use unicode_width::UnicodeWidthStr;
 
 /// 与tui::text::Span相似，可以在线程间传递

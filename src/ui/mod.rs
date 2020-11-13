@@ -1,28 +1,27 @@
-pub mod flow;
+// pub mod flow;
 pub mod line;
 pub mod ansi;
 pub mod span;
+pub mod style;
 
 use crate::conf;
 use crate::error::Result;
-use line::Line;
-use flow::{MessageFlow, FlowBoard};
+use line::RawLine;
 use crossbeam_channel::Receiver;
 use std::io::{self, Stdout};
 use termion::event::{Key, MouseButton, MouseEvent};
 use termion::input::MouseTerminal;
 use termion::raw::{IntoRawMode, RawTerminal};
 use termion::screen::AlternateScreen;
-use tui::backend::{Backend, TermionBackend};
-use tui::layout::{Constraint, Direction, Layout};
-use tui::style::{Color, Style};
-use tui::widgets::{Block, Borders, Paragraph, Wrap};
-use tui::Terminal;
+use termion::terminal_size;
+use std::collections::VecDeque;
+use std::io::Write;
 
 pub struct RawScreen {
-    // pub lines: Lines,
-    pub flow: MessageFlow,
-    pub command: String,
+    // pub flow: MessageFlow,
+    pub lines: VecDeque<RawLine>,
+    pub max_lines: usize,
+    pub cmd: String,
     pub script_prefix: char,
     pub script_mode: bool,
     pub auto_follow: bool,
@@ -31,12 +30,13 @@ pub struct RawScreen {
 
 impl RawScreen {
     pub fn new(termconf: conf::Term) -> Self {
-        let flow = MessageFlow::new()
-            .max_lines(termconf.max_lines as u32)
-            .cjk(true);
+        // let flow = MessageFlow::new()
+        //     .max_lines(termconf.max_lines as u32)
+        //     .cjk(true);
         Self {
-            flow,
-            command: String::new(),
+            lines: VecDeque::new(),
+            max_lines: termconf.max_lines,
+            cmd: String::new(),
             script_prefix: '.',
             script_mode: false,
             auto_follow: true,
@@ -44,10 +44,26 @@ impl RawScreen {
         }
     }
 
+    fn push_line(&mut self, line: RawLine) {
+        if let Some(last_line) = self.lines.back_mut() {
+            if !last_line.ended() {
+                last_line.push_line(&line);
+                return;
+            }
+        }
+        self.lines.push_back(line);
+    }
+
+    fn push_lines(&mut self, lines: Vec<RawLine>) {
+        for line in lines {
+            self.push_line(line);
+        }
+    }
+
     /// returns true means quit the render process
-    pub fn render<B: Backend, C: RawScreenCallback>(
+    pub fn render<W: Write, C: RawScreenCallback>(
         &mut self,
-        terminal: &mut Terminal<B>,
+        terminal: &mut W,
         uirx: &Receiver<RawScreenInput>,
         cb: &mut C,
     ) -> Result<bool> {
@@ -55,28 +71,37 @@ impl RawScreen {
             RawScreenInput::Key(key) => match key {
                 Key::Char('\n') => {
                     if self.script_mode {
-                        let mut script = std::mem::replace(&mut self.command, String::new());
+                        let mut script = std::mem::replace(&mut self.cmd, String::new());
                         script.remove(0);
                         self.script_mode = false;
                         cb.on_script(self, script)
                     } else {
-                        let cmd = std::mem::replace(&mut self.command, String::new());
+                        let cmd = std::mem::replace(&mut self.cmd, String::new());
                         cb.on_cmd(self, cmd);
                     }
                 }
-                Key::Char(c) if c == self.script_prefix && self.command.is_empty() => {
-                    self.command.push(c);
+                Key::Char(c) if c == self.script_prefix && self.cmd.is_empty() => {
+                    self.cmd.push(c);
                     self.script_mode = true;
+                    draw_cmd(self, terminal)?;
+                    terminal.flush()?;
+                    return Ok(false);
                 }
                 Key::Char(c) => {
-                    self.command.push(c);
+                    self.cmd.push(c);
+                    draw_cmd(self, terminal)?;
+                    terminal.flush()?;
+                    return Ok(false);
                 }
                 Key::Backspace => {
-                    self.command.pop();
-                    if self.command.is_empty() {
+                    self.cmd.pop();
+                    if self.cmd.is_empty() {
                         // turn off script mode
                         self.script_mode = false;
                     }
+                    draw_cmd(self, terminal)?;
+                    terminal.flush()?;
+                    return Ok(false);
                 }
                 Key::Ctrl('q') => {
                     // self.evttx.send(Event::Quit)?;
@@ -91,10 +116,10 @@ impl RawScreen {
                 }
             },
             RawScreenInput::Lines(lines) => {
-                self.flow.push_lines(lines);
+                self.push_lines(lines);
             }
             RawScreenInput::Line(line) => {
-                self.flow.push_line(line)
+                self.push_line(line)
             }
             RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelUp, ..))
                 if !self.auto_follow =>
@@ -116,41 +141,37 @@ impl RawScreen {
             RawScreenInput::Tick | RawScreenInput::WindowResize => (),
         }
         draw_terminal(self, terminal)?;
+        terminal.flush()?;
         Ok(false)
     }
 }
 
-fn draw_terminal<B: Backend>(screen: &mut RawScreen, terminal: &mut Terminal<B>) -> Result<()> {
-    terminal.draw(|f| {
-        // with border
-        let server_board_height = f.size().height as usize - 2;
-        // let server_board_width = f.size().width - 3;
-        // let server_max_lines = server_board_height - 2;
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(0)
-            .constraints(
-                [
-                    Constraint::Length(server_board_height as u16),
-                    Constraint::Length(2),
-                ]
-                .as_ref(),
-            )
-            .split(f.size());
-        // server board
-        let board = FlowBoard::new(&screen.flow, Block::default().title(" ").borders(Borders::NONE), Style::default());
-        f.render_widget(board, chunks[0]);
-        // user input
-        let mut cmd_style = Style::default();
-        if screen.script_mode {
-            cmd_style = cmd_style.bg(Color::Blue);
-        }
-        let cmd = Paragraph::new(screen.command.as_ref())
-            .style(cmd_style)
-            .block(Block::default().borders(Borders::NONE).title(" "));
-            // .wrap(Wrap { trim: false });
-        f.render_widget(cmd, chunks[1]);
-    })?;
+fn draw_cmd<W: Write>(screen: &mut RawScreen, terminal: &mut W) -> Result<()> {
+    // todo 仅刷新命令行
+    if screen.script_mode {
+        write!(terminal, "{}", termion::color::Bg(termion::color::Cyan))?;
+    } else {
+        write!(terminal, "{}", termion::color::Bg(termion::color::Reset))?;
+    }
+    write!(terminal, "{}", screen.cmd)?;
+    Ok(())
+}
+
+fn draw_terminal<W: Write>(screen: &mut RawScreen, terminal: &mut W) -> Result<()> {
+    let (_, height) = terminal_size()?;
+    let height = height as usize;
+    if height > screen.lines.len() {
+        for _ in screen.lines.len()..height {
+            write!(terminal, "\r\n")?;
+        }    
+    }
+    for line in screen.lines.iter().rev().take(height).rev() {
+        write!(terminal, "{}", line.as_ref())?;
+    }
+    // 空一行到命令行
+    write!(terminal, "{}\r\n\r\n", termion::style::Reset)?;
+    // 命令行
+    draw_cmd(screen, terminal)?;
     Ok(())
 }
 
@@ -162,22 +183,19 @@ pub trait RawScreenCallback {
     fn on_quit(&mut self, screen: &mut RawScreen);
 }
 
-pub fn init_terminal(
-) -> Result<Terminal<TermionBackend<AlternateScreen<MouseTerminal<RawTerminal<Stdout>>>>>> {
+pub fn init_terminal() -> Result<AlternateScreen<MouseTerminal<RawTerminal<Stdout>>>> {
     let stdout = io::stdout().into_raw_mode()?;
     let stdout = MouseTerminal::from(stdout);
     let stdout = AlternateScreen::from(stdout);
-    let backend = TermionBackend::new(stdout);
-    let terminal = Terminal::new(backend)?;
-    Ok(terminal)
+    Ok(stdout)
 }
 
 #[derive(Debug, Clone)]
 pub enum RawScreenInput {
     // Line(StyledLine),
-    Line(Line),
+    Line(RawLine),
     // Lines(VecDeque<StyledLine>),
-    Lines(Vec<Line>),
+    Lines(Vec<RawLine>),
     Key(Key),
     Tick,
     WindowResize,
