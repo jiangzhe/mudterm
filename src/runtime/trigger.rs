@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::runtime::{Pattern, Scripts, Target};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;

@@ -1,75 +1,109 @@
 use crate::ui::span::ArcSpan;
-use unicode_width::UnicodeWidthChar;
-use std::sync::Arc;
 use std::collections::VecDeque;
+use std::sync::Arc;
+use unicode_width::UnicodeWidthChar;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum RawLine {
-    Owned(String),
-    Ref(Arc<str>, usize, usize),
+#[derive(Debug)]
+pub struct RawLine(Arc<str>, usize, usize);
+
+impl PartialEq for RawLine {
+    fn eq(&self, other: &Self) -> bool {
+        self.content() == other.content()
+    }
+}
+
+impl Clone for RawLine {
+    fn clone(&self) -> Self {
+        let Self(s, start, end) = self;
+        // 判断如果是整行，或者长度不小于128，直接复制
+        if (*start == 0 && *end == s.len()) || *end >= *start + 128 {
+            return Self(s.clone(), *start, *end);
+        }
+        // 较短时复制字符串
+        let s = s.as_ref()[*start..*end].to_owned();
+        Self::owned(s)
+    }
+}
+
+
+impl AsRef<str> for RawLine {
+    fn as_ref(&self) -> &str {
+        self.content()
+    }
 }
 
 impl RawLine {
-
     pub fn owned(line: String) -> Self {
-        Self::Owned(line)
+        let len = line.len();
+        Self(Arc::from(line), 0, len)
     }
 
     pub fn borrowed(line: Arc<str>, start: usize, end: usize) -> Self {
         debug_assert!(end >= start);
-        Self::Ref(line, start, end)
+        Self(line, start, end)
     }
 
     pub fn err(line: impl AsRef<str>) -> Self {
-        let formatted = format!("{}{}{}\r\n", termion::style::Invert, line.as_ref(), termion::style::Reset);
-        Self::Owned(formatted)
+        let formatted = format!(
+            "{}{}{}\r\n",
+            termion::style::Invert,
+            line.as_ref(),
+            termion::style::Reset
+        );
+        Self::owned(formatted)
     }
 
     pub fn note(line: impl AsRef<str>) -> Self {
-        let formatted = format!("{}{}{}\r\n", termion::color::Fg(termion::color::LightBlue), line.as_ref(), termion::style::Reset);
-        Self::Owned(formatted)
+        let formatted = format!(
+            "{}{}{}\r\n",
+            termion::color::Fg(termion::color::LightBlue),
+            line.as_ref(),
+            termion::style::Reset
+        );
+        Self::owned(formatted)
     }
 
     pub fn raw(line: impl AsRef<str>) -> Self {
         let formatted = format!("{}{}\r\n", termion::style::Reset, line.as_ref());
-        Self::Owned(formatted)
+        Self::owned(formatted)
     }
 
     pub fn ended(&self) -> bool {
-        match self {
-            Self::Owned(s) => s.ends_with('\n'),
-            Self::Ref(s, start, end) => s.as_ref()[*start..*end].ends_with('\n'),
-        }
+        let Self(s, start, end) = self;
+        s.as_ref()[*start..*end].ends_with('\n')
     }
 
     pub fn len(&self) -> usize {
-        match self {
-            Self::Owned(s) => s.len(),
-            Self::Ref(_, start, end) => *end - *start,
-        }
+        let Self(_, start, end) = self;
+        *end - *start
     }
 
-    pub fn push_line(&mut self, line: impl AsRef<str>) {
-        let mut s = match self {
-            Self::Owned(s) => {
-                s.push_str(line.as_ref());
-                return;
-            },
-            Self::Ref(s, start, end) => s.as_ref()[*start..*end].to_owned(),
-        };
+    pub fn content(&self) -> &str {
+        let Self(s, start, end) = self;
+        &s.as_ref()[*start..*end]
+    }
+
+    // maybe expensive because we need to copy the referenced string
+    pub fn push_line(&mut self, line: impl AsRef<str>) -> bool {
+        if self.ended() {
+            // already ended, do not append
+            return false;
+        }
+        let Self(s, start, end) = self;
+        let mut s = s.as_ref()[*start..*end].to_owned();
         s.push_str(line.as_ref());
-        *self = Self::Owned(s);
+        *self = Self::owned(s);
+        true
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct RawLineBuffer {
+pub struct RawLines {
     lines: VecDeque<RawLine>,
     capacity: usize,
 }
 
-impl RawLineBuffer {
-
+impl RawLines {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             lines: VecDeque::new(),
@@ -108,15 +142,6 @@ impl RawLineBuffer {
     }
 }
 
-impl AsRef<str> for RawLine {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::Owned(s) => s,
-            Self::Ref(s, start, end) => &s.as_ref()[*start..*end],
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Line {
     pub spans: Vec<ArcSpan>,
@@ -124,29 +149,47 @@ pub struct Line {
 
 impl Line {
     pub fn new(spans: Vec<ArcSpan>) -> Self {
-        Self{spans}
+        Self { spans }
     }
 
     pub fn ended(&self) -> bool {
-        self.spans.last().map(|s| s.ended).unwrap_or(false)
+        self.spans.last().map(|s| s.content().ends_with('\n')).unwrap_or(false)
+    }
+
+    pub fn width(&self, cjk: bool) -> usize {
+        self.spans.iter().map(|s| s.width(cjk)).sum()
     }
 
     pub fn wrap(&self, max_width: usize, cjk: bool) -> WrapLine {
-        let mut lines= vec![];
+        let mut lines = vec![];
         wrap_line(&self, max_width, cjk, &mut lines);
         WrapLine(lines)
     }
 
-    pub fn note(content: impl Into<String>) -> Self {
-        Self{spans: vec![ArcSpan::note(content)]}
+    pub fn fmt_note(content: impl Into<String>) -> Self {
+        Self {
+            spans: vec![ArcSpan::fmt_note(content)],
+        }
     }
 
-    pub fn err(content: impl Into<String>) -> Self {
-        Self{spans: vec![ArcSpan::err(content)]}
+    pub fn fmt_err(content: impl Into<String>) -> Self {
+        Self {
+            spans: vec![ArcSpan::fmt_err(content)],
+        }
     }
 
-    pub fn raw(content: impl Into<String>) -> Self {
-        Self{spans: vec![ArcSpan::raw(content)]}
+    pub fn fmt_raw(content: impl Into<String>) -> Self {
+        Self {
+            spans: vec![ArcSpan::fmt_raw(content)],
+        }
+    }
+
+    pub fn push_span(&mut self, span: ArcSpan) -> bool {
+        if self.ended() {
+            return false;
+        }
+        self.spans.push(span);
+        true
     }
 }
 
@@ -154,13 +197,37 @@ impl Line {
 pub struct WrapLine(pub Vec<Line>);
 
 impl WrapLine {
-
-    pub fn wrap(&self, max_width: usize, cjk: bool) -> Self {
+    pub fn reshape(&self, max_width: usize, cjk: bool) -> Self {
         let mut lines = vec![];
         for line in &self.0 {
             wrap_line(line, max_width, cjk, &mut lines);
         }
         WrapLine(lines)
+    }
+
+    pub fn ended(&self) -> bool {
+        self.0.last().map(|l| l.ended()).unwrap_or(false)
+    }
+
+    /// when calling this method, the max_width should be identical to previous setting
+    /// otherwise, please call reshape() method at last
+    pub fn push_span(&mut self, span: ArcSpan, max_width: usize, cjk: bool) -> bool {
+        if self.ended() {
+            return false;
+        }
+        if self.0.is_empty() {
+            self.0.push(Line::new(vec![span]));
+            return true;
+        }
+        let last_line = self.0.last_mut().unwrap();
+        last_line.push_span(span);
+        if last_line.width(cjk) > max_width {
+            // exceeds max width, must wrap
+            let wl = last_line.wrap(max_width, cjk);
+            self.0.pop();
+            self.0.extend(wl.0);
+        }
+        true
     }
 }
 
@@ -172,10 +239,8 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
     } else {
         Vec::new()
     };
-    let mut curr_width = curr_line.iter()
-        .map(|span| span.width(cjk))
-        .sum();
-    
+    let mut curr_width = curr_line.iter().map(|span| span.width(cjk)).sum();
+
     for span in &line.spans {
         // 判断宽度是否超过限制
         if span.width(cjk) + curr_width <= max_width {
@@ -189,7 +254,7 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
             }
         } else {
             let new_style = span.style;
-            let new_ended = span.ended;
+            // let new_ended = span.ended;
             let mut new_content = String::new();
             for c in span.content().chars() {
                 let cw = if cjk { c.width_cjk() } else { c.width() }.unwrap_or(0);
@@ -199,10 +264,9 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
                 } else {
                     // exceeds max width
                     // current char must be wrap to next line, so this span is partial
-                    let new_span = ArcSpan::new(
+                    let new_span = ArcSpan::owned(
                         std::mem::replace(&mut new_content, String::new()),
                         new_style,
-                        false,
                     );
                     append_span(&mut curr_line, new_span);
                     lines.push(Line::new(std::mem::replace(&mut curr_line, Vec::new())));
@@ -213,7 +277,7 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
             }
             // concat last span to curr_line
             if !new_content.is_empty() {
-                let new_span = ArcSpan::new(new_content, new_style, new_ended);
+                let new_span = ArcSpan::owned(new_content, new_style);
                 curr_line.push(new_span);
             }
         }
@@ -221,19 +285,19 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
     if !curr_line.is_empty() {
         lines.push(Line::new(curr_line));
     }
-} 
+}
 
 // 将span合并进行，返回行是否结束
 fn append_span(line: &mut Vec<ArcSpan>, span: ArcSpan) -> bool {
-    let ended = span.ended;
     if let Some(last_span) = line.last_mut() {
         if last_span.style == span.style {
             // 仅当格式相同时合并
             last_span.push_str(span.content());
-            last_span.ended = ended;
-            return ended;
+            // last_span.ended = ended;
+            return last_span.ended();
         }
     }
+    let ended = span.ended();
     line.push(span);
     ended
 }
@@ -242,64 +306,79 @@ fn append_span(line: &mut Vec<ArcSpan>, span: ArcSpan) -> bool {
 mod tests {
 
     use super::*;
-    use crate::ui::style::{Style, Color};
+    use crate::ui::style::{Color, Style};
 
     #[test]
     fn test_wrap_single_line() {
         let line = Line::new(vec![ended_span("helloworld")]);
         let wl = line.wrap(20, true);
-        assert_eq!(wl, WrapLine(vec![
-            Line::new(vec![ended_span("helloworld")]),
-        ]));
+        assert_eq!(
+            wl,
+            WrapLine(vec![Line::new(vec![ended_span("helloworld")]),])
+        );
 
         let line = Line::new(vec![ended_span("helloworld")]);
         let wl = line.wrap(4, true);
-        assert_eq!(wl, WrapLine(vec![
-            Line::new(vec![partial_span("hell")]), 
-            Line::new(vec![partial_span("owor")]), 
-            Line::new(vec![ended_span("ld")]),
-        ]));
+        assert_eq!(
+            wl,
+            WrapLine(vec![
+                Line::new(vec![partial_span("hell")]),
+                Line::new(vec![partial_span("owor")]),
+                Line::new(vec![ended_span("ld")]),
+            ])
+        );
 
         let line = Line::new(vec![ended_span("中国人")]);
         let wl = line.wrap(3, true);
-        assert_eq!(wl, WrapLine(vec![
-            Line::new(vec![partial_span("中")]),
-            Line::new(vec![partial_span("国")]),
-            Line::new(vec![ended_span("人")]),
-        ]))
+        assert_eq!(
+            wl,
+            WrapLine(vec![
+                Line::new(vec![partial_span("中")]),
+                Line::new(vec![partial_span("国")]),
+                Line::new(vec![ended_span("人")]),
+            ])
+        )
     }
 
     #[test]
     fn test_wrap_multi_line() {
         let line = Line::new(vec![ended_span("helloworld")]);
         let wl = line.wrap(4, true);
-        let wl = wl.wrap(6, true);
-        assert_eq!(wl, WrapLine(vec![
-            Line::new(vec![partial_span("hellow")]),
-            Line::new(vec![ended_span("orld")]),
-        ]));
+        let wl = wl.reshape(6, true);
+        assert_eq!(
+            wl,
+            WrapLine(vec![
+                Line::new(vec![partial_span("hellow")]),
+                Line::new(vec![ended_span("orld")]),
+            ])
+        );
     }
 
     #[test]
     fn test_warp_multi_style() {
         let line = Line::new(vec![red_span("hello"), ended_span("world")]);
         let wl = line.wrap(4, true);
-        assert_eq!(wl, WrapLine(vec![
-            Line::new(vec![red_span("hell")]),
-            Line::new(vec![red_span("o"), partial_span("wor")]),
-            Line::new(vec![ended_span("ld")]),
-        ]));
+        assert_eq!(
+            wl,
+            WrapLine(vec![
+                Line::new(vec![red_span("hell")]),
+                Line::new(vec![red_span("o"), partial_span("wor")]),
+                Line::new(vec![ended_span("ld")]),
+            ])
+        );
     }
 
     fn ended_span(s: &str) -> ArcSpan {
-        ArcSpan::new(s, Style::default(), true)
+        let mut s = s.to_owned();
+        s.push_str("\r\n");
+        ArcSpan::owned(s, Style::default())
     }
 
     fn partial_span(s: &str) -> ArcSpan {
-        ArcSpan::new(s, Style::default(), false)
+        ArcSpan::owned(s, Style::default())
     }
 
     fn red_span(s: &str) -> ArcSpan {
-        ArcSpan::new(s, Style::default().fg(Color::Red), false)
+        ArcSpan::owned(s, Style::default().fg(Color::Red))
     }
 }

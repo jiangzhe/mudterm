@@ -1,21 +1,21 @@
 // pub mod flow;
-pub mod line;
 pub mod ansi;
+pub mod line;
 pub mod span;
 pub mod style;
+pub mod terminal;
+pub mod window;
+pub mod width;
 
 use crate::conf;
 use crate::error::Result;
-use line::RawLine;
 use crossbeam_channel::Receiver;
-use std::io::{self, Stdout};
-use termion::event::{Key, MouseButton, MouseEvent};
-use termion::input::MouseTerminal;
-use termion::raw::{IntoRawMode, RawTerminal};
-use termion::screen::AlternateScreen;
-use termion::terminal_size;
+use line::RawLine;
 use std::collections::VecDeque;
 use std::io::Write;
+use termion::event::{Key, MouseButton, MouseEvent};
+use termion::terminal_size;
+use crate::ui::ansi::SpanStream;
 
 pub struct RawScreen {
     // pub flow: MessageFlow,
@@ -26,6 +26,7 @@ pub struct RawScreen {
     pub script_mode: bool,
     pub auto_follow: bool,
     pub scroll: (u16, u16),
+    pub spans: SpanStream,
 }
 
 impl RawScreen {
@@ -41,6 +42,7 @@ impl RawScreen {
             script_mode: false,
             auto_follow: true,
             scroll: (0, 0),
+            spans: SpanStream::new(),
         }
     }
 
@@ -71,8 +73,7 @@ impl RawScreen {
             RawScreenInput::Key(key) => match key {
                 Key::Char('\n') => {
                     if self.script_mode {
-                        let mut script = std::mem::replace(&mut self.cmd, String::new());
-                        script.remove(0);
+                        let script = std::mem::replace(&mut self.cmd, String::new());
                         self.script_mode = false;
                         cb.on_script(self, script)
                     } else {
@@ -81,30 +82,29 @@ impl RawScreen {
                     }
                 }
                 Key::Char(c) if c == self.script_prefix && self.cmd.is_empty() => {
-                    self.cmd.push(c);
                     self.script_mode = true;
-                    draw_cmd(self, terminal)?;
+                    script_mode(terminal, self.script_mode)?;
                     terminal.flush()?;
                     return Ok(false);
                 }
                 Key::Char(c) => {
                     self.cmd.push(c);
-                    draw_cmd(self, terminal)?;
+                    write!(terminal, "{}", c)?;
                     terminal.flush()?;
                     return Ok(false);
                 }
                 Key::Backspace => {
-                    self.cmd.pop();
-                    if self.cmd.is_empty() {
-                        // turn off script mode
-                        self.script_mode = false;
+                    if self.cmd.pop().is_some() {
+                        if self.cmd.is_empty() {
+                            // turn off script mode
+                            self.script_mode = false;
+                        }
+                        write!(terminal, "\r{}{}", termion::clear::CurrentLine, &self.cmd)?;
+                        terminal.flush()?;
                     }
-                    draw_cmd(self, terminal)?;
-                    terminal.flush()?;
                     return Ok(false);
                 }
                 Key::Ctrl('q') => {
-                    // self.evttx.send(Event::Quit)?;
                     cb.on_quit(self);
                     return Ok(true);
                 }
@@ -115,12 +115,8 @@ impl RawScreen {
                     eprintln!("unhandled key {:?}", k);
                 }
             },
-            RawScreenInput::Lines(lines) => {
-                self.push_lines(lines);
-            }
-            RawScreenInput::Line(line) => {
-                self.push_line(line)
-            }
+            RawScreenInput::Lines(lines) => self.push_lines(lines),
+            RawScreenInput::Line(line) => self.push_line(line),
             RawScreenInput::Mouse(MouseEvent::Press(MouseButton::WheelUp, ..))
                 if !self.auto_follow =>
             {
@@ -146,14 +142,19 @@ impl RawScreen {
     }
 }
 
-fn draw_cmd<W: Write>(screen: &mut RawScreen, terminal: &mut W) -> Result<()> {
-    // todo 仅刷新命令行
-    if screen.script_mode {
-        write!(terminal, "{}", termion::color::Bg(termion::color::Cyan))?;
+fn draw_cmdline<W: Write>(screen: &mut RawScreen, terminal: &mut W) -> Result<()> {
+    script_mode(terminal, screen.script_mode)?;
+    write!(terminal, "{}", screen.cmd)?;
+    Ok(())
+}
+
+fn script_mode<W: Write>(terminal: &mut W, script_mode: bool) -> Result<()> {
+    if script_mode {
+        write!(terminal, "{}", termion::color::Bg(termion::color::Blue))?;
     } else {
         write!(terminal, "{}", termion::color::Bg(termion::color::Reset))?;
     }
-    write!(terminal, "{}", screen.cmd)?;
+    write!(terminal, "{}", termion::clear::CurrentLine)?;
     Ok(())
 }
 
@@ -163,15 +164,25 @@ fn draw_terminal<W: Write>(screen: &mut RawScreen, terminal: &mut W) -> Result<(
     if height > screen.lines.len() {
         for _ in screen.lines.len()..height {
             write!(terminal, "\r\n")?;
-        }    
+        }
     }
     for line in screen.lines.iter().rev().take(height).rev() {
         write!(terminal, "{}", line.as_ref())?;
+        // to remove
+        // screen.spans.fill(line.as_ref());
+        // let mut width_cjk = 0;
+        // let mut width = 0;
+        // while let Some(span) = screen.spans.next_span() {
+        //     width_cjk += span.width(true);
+        //     width += span.width(false);
+        //     eprint!("{}", line.as_ref());
+        //     eprintln!("width={}, width_cjk={}", width, width_cjk);
+        // }
     }
     // 空一行到命令行
     write!(terminal, "{}\r\n\r\n", termion::style::Reset)?;
     // 命令行
-    draw_cmd(screen, terminal)?;
+    draw_cmdline(screen, terminal)?;
     Ok(())
 }
 
@@ -183,12 +194,6 @@ pub trait RawScreenCallback {
     fn on_quit(&mut self, screen: &mut RawScreen);
 }
 
-pub fn init_terminal() -> Result<AlternateScreen<MouseTerminal<RawTerminal<Stdout>>>> {
-    let stdout = io::stdout().into_raw_mode()?;
-    let stdout = MouseTerminal::from(stdout);
-    let stdout = AlternateScreen::from(stdout);
-    Ok(stdout)
-}
 
 #[derive(Debug, Clone)]
 pub enum RawScreenInput {

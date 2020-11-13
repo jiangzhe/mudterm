@@ -1,24 +1,25 @@
 use crate::ui::span::ArcSpan;
-use crate::ui::style::{Style, Color, Modifier};
+use crate::ui::style::{Color, Modifier, Style};
+use std::sync::Arc;
 
-#[derive(Debug)]
+/// todo: 尽可能使用Arc而不拷贝字符串
 /// 将ansi字符流转换为ArcSpan流
+#[derive(Debug)]
 pub struct SpanStream {
     style: Style,
     // spaces_per_tab: usize,
     reserve_cr: bool,
     // buffer string to handle incomplete ansi sequence
-    buf: String,
+    buf: Option<Arc<str>>,
     next: usize,
 }
 
 impl SpanStream {
-
     pub fn new() -> Self {
-        Self{
+        Self {
             style: Style::default(),
             reserve_cr: false,
-            buf: String::new(),
+            buf: None,
             next: 0,
         }
     }
@@ -29,18 +30,21 @@ impl SpanStream {
     }
 
     pub fn fill(&mut self, input: impl Into<String>) {
-        if self.buf.is_empty() {
-            self.buf = input.into();
-            return;
+        match self.buf.take() {
+            Some(buf) => {
+                let mut s = buf.as_ref().to_owned();
+                s.push_str(&input.into());
+                self.buf = Some(Arc::from(s));
+            }
+            None => self.buf = Some(Arc::from(input.into())),
         }
-        self.buf.push_str(&input.into());
     }
 
     pub fn next_span(&mut self) -> Option<ArcSpan> {
         loop {
             match self.next_snippet(self.next) {
                 Snippet::End => {
-                    self.buf.clear();
+                    self.buf.take();
                     self.next = 0;
                     return None;
                 }
@@ -60,89 +64,92 @@ impl SpanStream {
     }
 
     fn next_snippet(&self, start: usize) -> Snippet {
-        if start == self.buf.len() {
+        if self.buf.is_none() {
             return Snippet::End;
         }
-        if self.buf[start..].starts_with("\x1b[") {
+        let buf = self.buf.as_ref().unwrap();
+        if start == buf.as_ref().len() {
+            return Snippet::End;
+        }
+        if buf.as_ref()[start..].starts_with("\x1b[") {
             let sgm_start = start + 2;
-            match self.parse_sgm(sgm_start) {
+            match self.parse_sgm(buf, sgm_start) {
                 Some((style, next)) => {
                     return Snippet::Style(style, next);
                 }
                 None => {
-                    eprintln!("unrecognized ansi escape: {:?}", &self.buf[sgm_start..]);
+                    eprintln!("unrecognized ansi escape: {:?}", &buf.as_ref()[sgm_start..]);
                     return Snippet::Incomplete;
                 }
             }
         }
         match self.parse_text(self.next) {
-            Some((span, next)) => {
-                Snippet::Span(span, next)
-            }
-            None => Snippet::End
+            Some((span, next)) => Snippet::Span(span, next),
+            None => Snippet::End,
         }
     }
 
     fn parse_text(&self, start: usize) -> Option<(ArcSpan, usize)> {
-        match self.buf[start..].find(|c| c == '\x1b' || c == '\n') {
+        // probably parse the text
+        let buf = self.buf.as_ref().cloned().unwrap();
+        match buf.as_ref()[start..].find(|c| c == '\x1b' || c == '\n') {
             None => {
                 // 整体都是文本，且无断行
-                let span = ArcSpan::new(self.buf[start..].to_owned(), self.style, false);
-                Some((span, self.buf.len()))
+                let buflen = buf.as_ref().len();
+                let span = ArcSpan::borrowed(buf, start, buflen, self.style);
+                Some((span, buflen))
             }
             Some(pos) => {
                 let pos = start + pos;
-                let c = self.buf.as_bytes()[pos];
+                let c = buf.as_ref().as_bytes()[pos];
                 if c == b'\x1b' {
-                    let span = ArcSpan::new(self.buf[start..pos].to_owned(), self.style, false);
+                    let span = ArcSpan::borrowed(buf, start, pos, self.style);
                     Some((span, pos))
                 } else {
-                    // 存在断行
-                    let end = if !self.reserve_cr && pos > 0 && self.buf.as_bytes()[pos-1] == b'\r' {
-                        // 去除\r
-                        pos - 1
-                    } else {
-                        pos
-                    };
-                    let span = ArcSpan::new(self.buf[start..end].to_owned(), self.style, true);
-                    Some((span, pos+1))
+                    // 存在行结束符，包含结束符
+                    let span = ArcSpan::borrowed(buf, start, pos + 1, self.style);
+                    Some((span, pos + 1))
                 }
             }
         }
     }
 
-
-    fn parse_sgm(&self, start: usize) -> Option<(Style, usize)> {
-        if start == self.buf.len() {
+    fn parse_sgm(&self, buf: &Arc<str>, start: usize) -> Option<(Style, usize)> {
+        if start == buf.as_ref().len() {
             // 不完整
             return None;
         }
 
-        self.buf[start..].find(|c| c != ';' && (c < '0' || c > '9')).map(|pos| {
-            let pos = start + pos;
-            if self.buf.as_bytes()[pos] != b'm' {
-                // 当前仅支持SGR参数
-                eprintln!("unsupported CSI sequence {:?}", self.buf[start..=pos].as_bytes());
-                return (self.style, pos+1);
-            }
-            let mut style = self.style;
-            let mut n = 0;
-            for c in self.buf[start..pos].chars() {
-                match c {
-                    ';' => {
-                        style = apply_ansi_sgr(style, n);
-                        n = 0;
-                    }
-                    '0' ..= '9' => {
-                        n *= 10;
-                        n += (c as u8) - b'0';
-                    }
-                    other => unreachable!("unreachable char '{}' in sgm sequence", other),
+        buf.as_ref()[start..]
+            .find(|c| c != ';' && (c < '0' || c > '9'))
+            .map(|pos| {
+                let pos = start + pos;
+                if buf.as_ref().as_bytes()[pos] != b'm' {
+                    // 当前仅支持SGR参数
+                    eprintln!(
+                        "unsupported CSI sequence {:?}",
+                        buf.as_ref()[start..=pos].as_bytes()
+                    );
+                    return (self.style, pos + 1);
                 }
-            }
-            style = apply_ansi_sgr(style, n);
-            (style, pos+1)
-        })
+                let mut style = self.style;
+                let mut n = 0;
+                for c in buf.as_ref()[start..pos].chars() {
+                    match c {
+                        ';' => {
+                            style = apply_ansi_sgr(style, n);
+                            n = 0;
+                        }
+                        '0'..='9' => {
+                            n *= 10;
+                            n += (c as u8) - b'0';
+                        }
+                        other => unreachable!("unreachable char '{}' in sgm sequence", other),
+                    }
+                }
+                style = apply_ansi_sgr(style, n);
+                (style, pos + 1)
+            })
     }
 }
 
@@ -231,20 +238,38 @@ mod tests {
     fn test_ansi_span_stream() {
         let mut ss = SpanStream::new();
         ss.fill("hello");
-        assert_eq!(Some(ArcSpan::new("hello", Style::default(), false)), ss.next_span());
+        assert_eq!(
+            Some(ArcSpan::owned("hello", Style::default())),
+            ss.next_span()
+        );
         assert_eq!(None, ss.next_span());
-        assert!(ss.buf.is_empty());
+        assert!(ss.buf.is_none());
         ss.fill("hello\nworld");
-        assert_eq!(Some(ArcSpan::new("hello", Style::default(), true)), ss.next_span());
-        assert_eq!(Some(ArcSpan::new("world", Style::default(), false)), ss.next_span());
+        assert_eq!(
+            Some(ArcSpan::owned("hello\n", Style::default())),
+            ss.next_span()
+        );
+        assert_eq!(
+            Some(ArcSpan::owned("world", Style::default())),
+            ss.next_span()
+        );
         assert_eq!(None, ss.next_span());
         ss.fill("\x1b[37m");
         assert_eq!(None, ss.next_span());
         assert_eq!(Style::default().fg(Color::Gray), ss.style);
         ss.fill("hello");
-        assert_eq!(Some(ArcSpan::new("hello", Style::default().fg(Color::Gray), false)), ss.next_span());
+        assert_eq!(
+            Some(ArcSpan::owned(
+                "hello",
+                Style::default().fg(Color::Gray),
+            )),
+            ss.next_span()
+        );
         ss.fill("\x1b[mworld\n");
-        assert_eq!(Some(ArcSpan::new("world", Style::default(), true)), ss.next_span());
+        assert_eq!(
+            Some(ArcSpan::owned("world\n", Style::default())),
+            ss.next_span()
+        );
     }
     use std::fs::File;
     use std::io::Read;

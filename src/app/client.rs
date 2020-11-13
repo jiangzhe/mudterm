@@ -4,10 +4,10 @@ use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, Run
 use crate::protocol::Packet;
 use crate::runtime::Runtime;
 use crate::signal;
-use crate::ui::init_terminal;
+use crate::ui::line::RawLine;
+use crate::ui::terminal::Terminal;
 use crate::ui::{RawScreen, RawScreenCallback, RawScreenInput};
 use crate::userinput;
-use crate::ui::line::RawLine;
 use crossbeam_channel::{unbounded, Sender};
 use std::{io, thread};
 
@@ -39,9 +39,10 @@ pub fn start_ui_handle(
     let handle = thread::spawn(move || {
         let mut screen = RawScreen::new(termconf);
         let mut cb = EventBusCallback(evttx);
-        let mut terminal = match init_terminal() {
+        let mut terminal = match Terminal::init() {
             Err(e) => {
                 eprintln!("error init raw terminal {}", e);
+                cb.on_quit(&mut screen);
                 return;
             }
             Ok(terminal) => {
@@ -49,6 +50,7 @@ pub fn start_ui_handle(
                 terminal
             }
         };
+        
         loop {
             match screen.render(&mut terminal, &uirx, &mut cb) {
                 Err(e) => {
@@ -105,21 +107,17 @@ pub fn start_from_server_handle(
     evttx: Sender<Event>,
     mut from_server: impl io::Read + Send + 'static,
 ) {
-    thread::spawn(move || {
-        loop {
-            match Packet::read_from(&mut from_server) {
-                Err(e) => {
-                    eprintln!("receive server message error {}", e);
-                    evttx.send(Event::ServerDown).unwrap();
-                    return;
-                }
-                Ok(Packet::Lines(lines)) => {
-                    evttx
-                        .send(Event::LinesFromServer(lines))
-                        .unwrap();
-                }
-                Ok(_) => (),
+    thread::spawn(move || loop {
+        match Packet::read_from(&mut from_server) {
+            Err(e) => {
+                eprintln!("receive server message error {}", e);
+                evttx.send(Event::ServerDown).unwrap();
+                return;
             }
+            Ok(Packet::Lines(lines)) => {
+                evttx.send(Event::LinesFromServer(lines)).unwrap();
+            }
+            Ok(_) => (),
         }
     });
 }
@@ -166,7 +164,8 @@ impl EventHandler for Client {
             Event::ServerDown => {
                 eprintln!("server down or not reachable");
                 // let user quit
-                rt.queue.push_line(RawLine::err("与服务器断开了连接，请关闭并重新连接"));
+                rt.queue
+                    .push_line(RawLine::err("与服务器断开了连接，请关闭并重新连接"));
             }
             // client模式不支持客户端连接
             Event::NewClient(..)

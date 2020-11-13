@@ -7,7 +7,7 @@ use crate::codec::{Codec, MudCodec};
 use crate::conf;
 use crate::error::{Error, Result};
 use crate::event::{Event, EventQueue, NextStep, RuntimeEvent, RuntimeEventHandler};
-use crate::ui::line::{RawLine, RawLineBuffer};
+use crate::ui::line::RawLine;
 // use crate::ui::ansi::SpanStream;
 use alias::Alias;
 use crossbeam_channel::Sender;
@@ -57,9 +57,6 @@ pub struct Runtime {
     pub(crate) queue: EventQueue,
     vars: Variables,
     pub(crate) mud_codec: MudCodec,
-    // reflector: Reflector,
-    // span_stream: SpanStream,
-    buffer: RawLineBuffer,
     echo_cmd: bool,
     cmd_delim: char,
     log_ansi: bool,
@@ -77,7 +74,7 @@ impl Runtime {
             vars: Variables::new(),
             mud_codec: MudCodec::new(),
             // local buffer for triggers
-            buffer: RawLineBuffer::with_capacity(10),
+            // buffer: RawLineBuffer::with_capacity(10),
             echo_cmd: config.term.echo_cmd,
             cmd_delim: config.term.cmd_delim,
             log_ansi: config.server.log_ansi,
@@ -142,7 +139,7 @@ impl Runtime {
         self.queue.push_line(line);
     }
 
-    pub fn process_mud_lines(&mut self, lines: impl IntoIterator<Item=RawLine>) {
+    pub fn process_mud_lines(&mut self, lines: impl IntoIterator<Item = RawLine>) {
         for line in lines {
             self.process_mud_line(line);
         }
@@ -227,7 +224,7 @@ impl Runtime {
 
             // 初始化Send函数
             let queue = self.queue.clone();
-            let send = lua_ctx.create_function(move |_, mut s: String| {
+            let send = lua_ctx.create_function(move |_, s: String| {
                 eprintln!("Send function called");
                 queue.push_cmd(s);
                 Ok(())
@@ -360,7 +357,12 @@ pub enum Target {
     Script,
 }
 
-pub fn translate_cmds(mut cmd: String, delim: char, send_empty_cmd: bool, aliases: &[Alias]) -> Vec<(Target, String)> {
+pub fn translate_cmds(
+    mut cmd: String,
+    delim: char,
+    send_empty_cmd: bool,
+    aliases: &[Alias],
+) -> Vec<(Target, String)> {
     if cmd.ends_with('\n') {
         cmd.truncate(cmd.len() - 1);
     }

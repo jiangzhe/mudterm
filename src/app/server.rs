@@ -3,9 +3,8 @@ use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, RuntimeEventHandler};
 use crate::protocol::Packet;
 use crate::runtime::Runtime;
-use crate::transport::{Telnet, TelnetEvent, Outbound};
-// use crate::ui::flow::MessageFlow;
-use crate::ui::line::RawLineBuffer;
+use crate::transport::{Outbound, Telnet, TelnetEvent};
+use crate::ui::line::RawLines;
 use crossbeam_channel::{unbounded, Sender};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::time::Duration;
@@ -26,9 +25,7 @@ pub fn start_from_mud_handle(evttx: Sender<Event>, from_mud: impl io::Read + Sen
                     break;
                 }
                 Ok(TelnetEvent::Empty) => (),
-                Ok(TelnetEvent::DataToSend(bs)) => {
-                    evttx.send(Event::TelnetBytesToMud(bs)).unwrap()
-                }
+                Ok(TelnetEvent::DataToSend(bs)) => evttx.send(Event::TelnetBytesToMud(bs)).unwrap(),
                 Ok(TelnetEvent::Text(bs)) => evttx.send(Event::BytesFromMud(bs)).unwrap(),
             }
         }
@@ -132,13 +129,13 @@ fn start_from_client_handle(mut conn: TcpStream, evttx: Sender<Event>) {
 pub struct Server {
     worldtx: Sender<Vec<u8>>,
     pass: String,
-    buffer: RawLineBuffer,
+    buffer: RawLines,
     to_cli: Option<(Sender<Packet>, SocketAddr)>,
 }
 
 impl Server {
     pub fn new(worldtx: Sender<Vec<u8>>, pass: String, init_max_lines: usize) -> Self {
-        let buffer = RawLineBuffer::with_capacity(init_max_lines);
+        let buffer = RawLines::with_capacity(init_max_lines);
         Self {
             worldtx,
             pass,

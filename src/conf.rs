@@ -77,7 +77,7 @@ pub struct Term {
     pub cmd_delim: char,
     pub send_empty_cmd: bool,
     pub reserve_cr: bool,
-    pub pad_non_cjk: bool
+    pub pad_non_cjk: bool,
 }
 
 impl Default for Term {

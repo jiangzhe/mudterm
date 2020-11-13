@@ -7,6 +7,6 @@ pub mod event;
 pub mod protocol;
 pub mod runtime;
 pub mod signal;
-pub mod ui;
 pub mod transport;
+pub mod ui;
 pub mod userinput;

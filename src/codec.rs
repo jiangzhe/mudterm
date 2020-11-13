@@ -31,7 +31,6 @@ impl Decoder {
         &mut self,
         input: impl AsRef<[u8]>,
         output: &mut String,
-        // remove_carriage: bool,
     ) -> (usize, Option<CodecError>) {
         self.0.raw_feed(input.as_ref(), output)
     }
@@ -77,7 +76,6 @@ pub struct MudCodec {
     gcodec: Codec,
     decoder: Decoder,
     encoder: Encoder,
-    // ansi_buf: AnsiBuffer,
 }
 
 impl MudCodec {
@@ -86,7 +84,6 @@ impl MudCodec {
             gcodec: Codec::default(),
             decoder: Decoder::default(),
             encoder: Encoder::default(),
-            // ansi_buf: AnsiBuffer::new(),
         }
     }
 
@@ -97,7 +94,6 @@ impl MudCodec {
     }
 
     pub fn decode(&mut self, bs: &[u8]) -> String {
-        // let bs = self.ansi_buf.process(bs);
         let mut s = String::new();
         let _ = self.decoder.decode_raw_to(bs, &mut s);
         s

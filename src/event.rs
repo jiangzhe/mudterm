@@ -1,8 +1,7 @@
 use crate::codec::Codec;
 use crate::error::Result;
 use crate::runtime::Runtime;
-use crate::ui::line::{RawLine, RawLineBuffer};
-use crate::ui::span::ArcSpan;
+use crate::ui::line::{RawLine, RawLines};
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::VecDeque;
 use std::net::{SocketAddr, TcpStream};
@@ -59,7 +58,7 @@ pub enum RuntimeEvent {
     /// string which is to be sent to server
     StringToMud(String),
     /// lines from server or script to display
-    DisplayLines(RawLineBuffer),
+    DisplayLines(RawLines),
 }
 
 /// 事件总线
@@ -74,22 +73,13 @@ impl EventQueue {
         Self(Arc::new(Mutex::new(VecDeque::new())))
     }
 
-    // pub fn push_span(&self, span: ArcSpan) {
-    //     let mut evtq = self.0.lock().unwrap();
-    //     if let Some(RuntimeEvent::DisplayLines(lines)) = evtq.back_mut() {
-    //         lines.push_span(span);
-    //         return;
-    //     }
-    //     evtq.push_back(RuntimeEvent::DisplayLines(DisplayLines(vec![Line::new(vec![span])])));
-    // }
-
     pub fn push_line(&self, line: RawLine) {
         let mut evtq = self.0.lock().unwrap();
         if let Some(RuntimeEvent::DisplayLines(lines)) = evtq.back_mut() {
             lines.push_line(line);
             return;
         }
-        let mut lines = RawLineBuffer::unbounded();
+        let mut lines = RawLines::unbounded();
         lines.push_line(line);
         evtq.push_back(RuntimeEvent::DisplayLines(lines));
     }

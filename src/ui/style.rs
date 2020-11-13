@@ -10,7 +10,7 @@ pub struct Style {
 
 impl Default for Style {
     fn default() -> Self {
-        Self{
+        Self {
             fg: None,
             bg: None,
             add_modifier: Modifier::empty(),

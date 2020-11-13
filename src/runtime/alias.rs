@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::runtime::{Pattern, Target, Scripts};
+use crate::runtime::{Pattern, Scripts, Target};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
@@ -91,11 +91,12 @@ impl AliasModel {
     }
 
     pub fn compile(self) -> Result<Alias> {
-        let (pattern, scripts) = super::compile_scripts(&self.pattern, &self.scripts, self.regexp, 1)?;
+        let (pattern, scripts) =
+            super::compile_scripts(&self.pattern, &self.scripts, self.regexp, 1)?;
         Ok(Alias {
             model: self,
             pattern,
-            scripts
+            scripts,
         })
     }
 }

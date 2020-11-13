@@ -1,9 +1,9 @@
 use crate::error::{Error, Result};
 use crate::ui::line::RawLine;
+use crate::ui::style::Color;
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use std::io::Cursor;
 use std::io::{Read, Write};
-use crate::ui::style::Color;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
@@ -151,7 +151,6 @@ fn color_to_num(color: Option<Color>) -> u8 {
         Some(Color::LightMagenta) => 95,
         Some(Color::LightCyan) => 96,
         Some(Color::White) => 97,
-        Some(_) => 0,
     }
 }
 
