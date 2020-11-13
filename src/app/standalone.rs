@@ -1,6 +1,7 @@
 use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, RuntimeEventHandler};
 use crate::runtime::Runtime;
+use crate::ui::window::WindowEvent;
 use crate::ui::RawScreenInput;
 use crossbeam_channel::Sender;
 use std::thread;
@@ -8,12 +9,12 @@ use std::thread;
 /// standalone app, directly connect to mud world
 /// and render UI
 pub struct Standalone {
-    uitx: Sender<RawScreenInput>,
+    uitx: Sender<WindowEvent>,
     worldtx: Sender<Vec<u8>>,
 }
 
 impl Standalone {
-    pub fn new(uitx: Sender<RawScreenInput>, worldtx: Sender<Vec<u8>>) -> Self {
+    pub fn new(uitx: Sender<WindowEvent>, worldtx: Sender<Vec<u8>>) -> Self {
         Self { uitx, worldtx }
     }
 }
@@ -29,16 +30,16 @@ impl EventHandler for Standalone {
             // 以下事件发送给UI线程处理
             Event::Tick => {
                 // todo: implements trigger by tick
-                self.uitx.send(RawScreenInput::Tick)?;
+                self.uitx.send(WindowEvent::Tick)?;
             }
             Event::TerminalKey(k) => {
-                self.uitx.send(RawScreenInput::Key(k))?;
+                self.uitx.send(WindowEvent::Key(k))?;
             }
             Event::TerminalMouse(m) => {
-                self.uitx.send(RawScreenInput::Mouse(m))?;
+                self.uitx.send(WindowEvent::Mouse(m))?;
             }
             Event::WindowResize => {
-                self.uitx.send(RawScreenInput::WindowResize)?;
+                self.uitx.send(WindowEvent::WindowResize)?;
             }
             // 以下事件交给运行时处理
             Event::BytesFromMud(bs) => {
@@ -79,7 +80,7 @@ impl RuntimeEventHandler for Standalone {
                 self.worldtx.send(bs)?;
             }
             RuntimeEvent::DisplayLines(lines) => {
-                self.uitx.send(RawScreenInput::Lines(lines.into_vec()))?;
+                self.uitx.send(WindowEvent::Lines(lines.into_vec()))?;
             }
         }
         Ok(NextStep::Run)

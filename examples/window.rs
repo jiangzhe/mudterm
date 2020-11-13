@@ -1,6 +1,6 @@
 use mudterm::error::{Error, Result};
 use mudterm::ui::terminal::Terminal;
-use mudterm::ui::ansi::SpanStream;
+use mudterm::ui::ansi::AnsiParser;
 use mudterm::ui::line::{RawLine, RawLines};
 use std::io::{Write, Read, stdin};
 use termion::input::{TermRead, MouseTerminal};
@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::init()?;
     let mut buf = String::new();
     let mut lines = RawLines::unbounded();
-    let mut spans = SpanStream::new();
+    let mut spans = AnsiParser::new();
     spans.fill(read_file()?);
     while let Some(span) = spans.next_span() {
         eprintln!("span={:?}", span);

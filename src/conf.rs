@@ -30,7 +30,6 @@ impl Default for World {
 pub struct Server {
     pub port: u16,
     pub log_file: String,
-    pub log_ansi: bool,
     pub debug_file: String,
     pub client_init_max_lines: usize,
     pub pass: String,
@@ -41,7 +40,6 @@ impl Default for Server {
         Self {
             port: 9680,
             log_file: String::from("server.log"),
-            log_ansi: false,
             debug_file: String::from("debug.log"),
             client_init_max_lines: 100,
             pass: String::from("pass"),

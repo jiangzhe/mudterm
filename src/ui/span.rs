@@ -1,31 +1,36 @@
 use crate::ui::style::{Color, Modifier, Style};
 use std::sync::Arc;
-use unicode_width::UnicodeWidthStr;
 
 /// 与tui::text::Span相似，可以在线程间传递
 #[derive(Clone)]
-pub struct ArcSpan {
+pub struct Span {
     pub style: Style,
     orig: Arc<str>,
     start: usize,
     end: usize,
 }
 
-impl PartialEq for ArcSpan {
+impl PartialEq for Span {
     fn eq(&self, other: &Self) -> bool {
         self.style == other.style && self.content() == other.content()
     }
 }
 
-impl std::fmt::Debug for ArcSpan {
+impl std::fmt::Debug for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "\"{}\"", self.content())
     }
 }
 
-impl ArcSpan {
+// impl std::fmt::Display for Span {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        
+//     }
+// }
 
-    pub fn owned(content: impl Into<String>, style: Style) -> Self {
+impl Span {
+
+    pub fn new(content: impl Into<String>, style: Style) -> Self {
         let content = content.into();
         let start = 0;
         let end = content.len();
@@ -49,33 +54,24 @@ impl ArcSpan {
     pub fn fmt_raw(content: impl Into<String>) -> Self {
         let mut content = content.into();
         content.push_str("\r\n");
-        Self::owned(content, Style::default())
+        Self::new(content, Style::default())
     }
 
     pub fn fmt_note(content: impl Into<String>) -> Self {
         let mut content = content.into();
         content.push_str("\r\n");
-        Self::owned(content, Style::default().fg(Color::LightBlue))
+        Self::new(content, Style::default().fg(Color::LightBlue))
     }
 
     pub fn fmt_err(content: impl Into<String>) -> Self {
         let mut content = content.into();
         content.push_str("\r\n");
-        Self::owned(content, Style::default().add_modifier(Modifier::REVERSED))
+        Self::new(content, Style::default().add_modifier(Modifier::REVERSED))
     }
 
     #[inline]
     pub fn content(&self) -> &str {
         &self.orig.as_ref()[self.start..self.end]
-    }
-
-    #[inline]
-    pub fn width(&self, cjk: bool) -> usize {
-        if cjk {
-            self.content().width_cjk()
-        } else {
-            self.content().width()
-        }
     }
 
     #[inline]

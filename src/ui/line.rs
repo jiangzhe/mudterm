@@ -1,7 +1,9 @@
-use crate::ui::span::ArcSpan;
+use crate::ui::span::Span;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use unicode_width::UnicodeWidthChar;
+// use unicode_width::UnicodeWidthChar;
+use crate::ui::width::AppendWidthTab8;
+use std::io::Write;
 
 #[derive(Debug)]
 pub struct RawLine(Arc<str>, usize, usize);
@@ -144,20 +146,24 @@ impl RawLines {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Line {
-    pub spans: Vec<ArcSpan>,
+    pub spans: Vec<Span>,
 }
 
 impl Line {
-    pub fn new(spans: Vec<ArcSpan>) -> Self {
+    pub fn new(spans: Vec<Span>) -> Self {
         Self { spans }
+    }
+
+    pub fn single(span: Span) -> Self {
+        Self { spans: vec![span] }
     }
 
     pub fn ended(&self) -> bool {
         self.spans.last().map(|s| s.content().ends_with('\n')).unwrap_or(false)
     }
 
-    pub fn width(&self, cjk: bool) -> usize {
-        self.spans.iter().map(|s| s.width(cjk)).sum()
+    pub fn display_width(&self, cjk: bool) -> usize {
+        self.append_width(0, cjk)
     }
 
     pub fn wrap(&self, max_width: usize, cjk: bool) -> WrapLine {
@@ -168,23 +174,23 @@ impl Line {
 
     pub fn fmt_note(content: impl Into<String>) -> Self {
         Self {
-            spans: vec![ArcSpan::fmt_note(content)],
+            spans: vec![Span::fmt_note(content)],
         }
     }
 
     pub fn fmt_err(content: impl Into<String>) -> Self {
         Self {
-            spans: vec![ArcSpan::fmt_err(content)],
+            spans: vec![Span::fmt_err(content)],
         }
     }
 
     pub fn fmt_raw(content: impl Into<String>) -> Self {
         Self {
-            spans: vec![ArcSpan::fmt_raw(content)],
+            spans: vec![Span::fmt_raw(content)],
         }
     }
 
-    pub fn push_span(&mut self, span: ArcSpan) -> bool {
+    pub fn push_span(&mut self, span: Span) -> bool {
         if self.ended() {
             return false;
         }
@@ -211,7 +217,7 @@ impl WrapLine {
 
     /// when calling this method, the max_width should be identical to previous setting
     /// otherwise, please call reshape() method at last
-    pub fn push_span(&mut self, span: ArcSpan, max_width: usize, cjk: bool) -> bool {
+    pub fn push_span(&mut self, span: Span, max_width: usize, cjk: bool) -> bool {
         if self.ended() {
             return false;
         }
@@ -221,7 +227,7 @@ impl WrapLine {
         }
         let last_line = self.0.last_mut().unwrap();
         last_line.push_span(span);
-        if last_line.width(cjk) > max_width {
+        if last_line.display_width(cjk) > max_width {
             // exceeds max width, must wrap
             let wl = last_line.wrap(max_width, cjk);
             self.0.pop();
@@ -239,32 +245,34 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
     } else {
         Vec::new()
     };
-    let mut curr_width = curr_line.iter().map(|span| span.width(cjk)).sum();
-
+    let mut curr_width = curr_line.append_width(0, cjk);
     for span in &line.spans {
         // 判断宽度是否超过限制
-        if span.width(cjk) + curr_width <= max_width {
+        let next_width = span.append_width(curr_width, cjk); 
+        if next_width <= max_width {
             // 合并到当前行
-            if append_span(&mut curr_line, span.clone()) {
+            append_span(&mut curr_line, span.clone());
+            if curr_line.last().unwrap().ended() {
                 // 行结束
                 lines.push(Line::new(curr_line.drain(..).collect()));
                 curr_width = 0;
             } else {
-                curr_width += span.width(cjk);
+                curr_width = next_width;
             }
         } else {
             let new_style = span.style;
             // let new_ended = span.ended;
             let mut new_content = String::new();
             for c in span.content().chars() {
-                let cw = if cjk { c.width_cjk() } else { c.width() }.unwrap_or(0);
-                if curr_width + cw <= max_width {
+                // let cw = if cjk { c.width_cjk() } else { c.width() }.unwrap_or(0);
+                let next_width = c.append_width(curr_width, cjk);
+                if next_width <= max_width {
                     new_content.push(c);
-                    curr_width += cw;
+                    curr_width = next_width;
                 } else {
                     // exceeds max width
                     // current char must be wrap to next line, so this span is partial
-                    let new_span = ArcSpan::owned(
+                    let new_span = Span::new(
                         std::mem::replace(&mut new_content, String::new()),
                         new_style,
                     );
@@ -272,12 +280,12 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
                     lines.push(Line::new(std::mem::replace(&mut curr_line, Vec::new())));
                     // we need to push current char to new content
                     new_content.push(c);
-                    curr_width = cw;
+                    curr_width = c.append_width(0, cjk);
                 }
             }
             // concat last span to curr_line
             if !new_content.is_empty() {
-                let new_span = ArcSpan::owned(new_content, new_style);
+                let new_span = Span::new(new_content, new_style);
                 curr_line.push(new_span);
             }
         }
@@ -288,18 +296,15 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
 }
 
 // 将span合并进行，返回行是否结束
-fn append_span(line: &mut Vec<ArcSpan>, span: ArcSpan) -> bool {
+fn append_span(line: &mut Vec<Span>, span: Span) {
     if let Some(last_span) = line.last_mut() {
         if last_span.style == span.style {
             // 仅当格式相同时合并
             last_span.push_str(span.content());
-            // last_span.ended = ended;
-            return last_span.ended();
+            return;
         }
     }
-    let ended = span.ended();
     line.push(span);
-    ended
 }
 
 #[cfg(test)]
@@ -368,17 +373,17 @@ mod tests {
         );
     }
 
-    fn ended_span(s: &str) -> ArcSpan {
+    fn ended_span(s: &str) -> Span {
         let mut s = s.to_owned();
         s.push_str("\r\n");
-        ArcSpan::owned(s, Style::default())
+        Span::new(s, Style::default())
     }
 
-    fn partial_span(s: &str) -> ArcSpan {
-        ArcSpan::owned(s, Style::default())
+    fn partial_span(s: &str) -> Span {
+        Span::new(s, Style::default())
     }
 
-    fn red_span(s: &str) -> ArcSpan {
-        ArcSpan::owned(s, Style::default().fg(Color::Red))
+    fn red_span(s: &str) -> Span {
+        Span::new(s, Style::default().fg(Color::Red))
     }
 }

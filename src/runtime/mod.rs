@@ -59,7 +59,6 @@ pub struct Runtime {
     pub(crate) mud_codec: MudCodec,
     echo_cmd: bool,
     cmd_delim: char,
-    log_ansi: bool,
     send_empty_cmd: bool,
     cmd_nr: usize,
     logger: Option<File>,
@@ -77,7 +76,6 @@ impl Runtime {
             // buffer: RawLineBuffer::with_capacity(10),
             echo_cmd: config.term.echo_cmd,
             cmd_delim: config.term.cmd_delim,
-            log_ansi: config.server.log_ansi,
             send_empty_cmd: config.term.send_empty_cmd,
             cmd_nr: 0,
             logger: None,
@@ -150,9 +148,7 @@ impl Runtime {
         let s: Arc<str> = Arc::from(s);
         // log server output with ansi sequence
         if let Some(logger) = self.logger.as_mut() {
-            if self.log_ansi {
-                logger.write_all(s.as_ref().as_bytes())?;
-            }
+            logger.write_all(s.as_ref().as_bytes())?;
         }
 
         // here just split into lines

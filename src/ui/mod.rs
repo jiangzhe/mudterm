@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 use std::io::Write;
 use termion::event::{Key, MouseButton, MouseEvent};
 use termion::terminal_size;
-use crate::ui::ansi::SpanStream;
+use crate::ui::ansi::AnsiParser;
 
 pub struct RawScreen {
     // pub flow: MessageFlow,
@@ -26,7 +26,7 @@ pub struct RawScreen {
     pub script_mode: bool,
     pub auto_follow: bool,
     pub scroll: (u16, u16),
-    pub spans: SpanStream,
+    pub spans: AnsiParser,
 }
 
 impl RawScreen {
@@ -42,7 +42,7 @@ impl RawScreen {
             script_mode: false,
             auto_follow: true,
             scroll: (0, 0),
-            spans: SpanStream::new(),
+            spans: AnsiParser::new(),
         }
     }
 

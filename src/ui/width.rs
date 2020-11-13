@@ -1,51 +1,75 @@
-use crate::ui::span::ArcSpan;
+use crate::ui::span::Span;
 use crate::ui::line::Line;
 use unicode_width::UnicodeWidthChar;
 
-pub trait DisplayWidthTab8 {
+pub trait AppendWidthTab8 {
     const TAB_SPACES: usize = 8;
     
-    fn display_width(&self, cjk: bool) -> usize;
-
+    // given previous width and cjk flag, returns next width
+    fn append_width(&self, prev_width: usize, cjk: bool) -> usize;
 }
 
-impl DisplayWidthTab8 for str {
+impl AppendWidthTab8 for char {
+    fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
+        if *self == '\t' {
+            prev_width / Self::TAB_SPACES * Self::TAB_SPACES + Self::TAB_SPACES
+        } else {
+            prev_width + if cjk { self.width_cjk().unwrap_or(0) } else { self.width().unwrap_or(0) }
+        }
+    }
+}
 
-    fn display_width(&self, cjk: bool) -> usize {
-        self.chars().fold(0, |s, c| {
+impl AppendWidthTab8 for str {
+    fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
+        self.chars().fold(prev_width, |w, c| {
             if c == '\t' {
-                s / Self::TAB_SPACES * Self::TAB_SPACES + Self::TAB_SPACES
+                w / Self::TAB_SPACES * Self::TAB_SPACES + Self::TAB_SPACES
             } else {
-                s + if cjk { c.width_cjk().unwrap_or(0) } else { c.width_cjk().unwrap_or(0) }
+                w + if cjk { c.width_cjk().unwrap_or(0) } else { c.width_cjk().unwrap_or(0) }
             }
         })
     }
 }
 
+impl AppendWidthTab8 for Span {
+    fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
+        self.content().append_width(prev_width, cjk)
+    }
+}
+
+impl AppendWidthTab8 for Vec<Span> {
+    fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
+        self.iter().fold(prev_width, |w, s| s.append_width(w, cjk))
+    }
+}
+
+
+impl AppendWidthTab8 for Line {
+    fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
+        self.spans.append_width(prev_width, cjk)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::DisplayWidthTab8;
+    use super::AppendWidthTab8;
+    use crate::ui::span::Span;
+    use crate::ui::line::Line;
+    use crate::ui::style::Style;
     use std::io::Read;
     use std::fs::File;
 
     #[test]
-    fn test_str_width() {
-
-        let s = "1234567812345678123456781234567812345678\t";
-        println!("{}|", s);
-        println!("width={}", s.display_width(true));
-
-
-        // let set = HashSet::new();
-
-        // let mut f = File::open("server.log").unwrap();
-        // let mut s = String::new();
-        // f.read_to_string(&mut s).unwrap();
-
-        // for c in s.chars() {
-        //     if c.width_cjk().is_none() && c != '\x1b' && c != '\r' && c != '\n' {
-        //         println!("char={}, hex={:x}", c, c as u32);
-        //     }
-        // }
+    fn test_append_width() {
+        let s = "123";
+        assert_eq!(3, s.append_width(0, true));
+        let s = "123\t";
+        assert_eq!(8, s.append_width(0, true));
+        let s = "123\t456";
+        assert_eq!(11, s.append_width(0, true));
+        let s = Line::fmt_raw("hello");
+        assert_eq!(5, s.append_width(0, true));
+        let s = Line::new(vec![Span::new("hello", Style::default()), Span::new("\tworld", Style::default())]);
+        assert_eq!(13, s.append_width(0, true));
     }
 }

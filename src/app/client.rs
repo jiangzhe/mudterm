@@ -8,6 +8,7 @@ use crate::ui::line::RawLine;
 use crate::ui::terminal::Terminal;
 use crate::ui::{RawScreen, RawScreenCallback, RawScreenInput};
 use crate::userinput;
+use crate::ui::window::{Window, WindowEvent, WindowCallback};
 use crossbeam_channel::{unbounded, Sender};
 use std::{io, thread};
 
@@ -33,16 +34,18 @@ pub fn start_signal_handle(evttx: Sender<Event>) -> thread::JoinHandle<()> {
 pub fn start_ui_handle(
     termconf: conf::Term,
     evttx: Sender<Event>,
-) -> Result<(Sender<RawScreenInput>, thread::JoinHandle<()>)> {
-    let (uitx, uirx) = unbounded::<RawScreenInput>();
+) -> Result<(Sender<WindowEvent>, thread::JoinHandle<()>)> {
+    let (uitx, uirx) = unbounded::<WindowEvent>();
 
     let handle = thread::spawn(move || {
-        let mut screen = RawScreen::new(termconf);
+        // let mut screen = RawScreen::new(termconf);
+        let (width, height) = termion::terminal_size().unwrap();
+        let mut window = Window::new(width as usize, height as usize, termconf);
         let mut cb = EventBusCallback(evttx);
         let mut terminal = match Terminal::init() {
             Err(e) => {
                 eprintln!("error init raw terminal {}", e);
-                cb.on_quit(&mut screen);
+                cb.on_quit(&mut window);
                 return;
             }
             Ok(terminal) => {
@@ -52,7 +55,7 @@ pub fn start_ui_handle(
         };
         
         loop {
-            match screen.render(&mut terminal, &uirx, &mut cb) {
+            match window.render(&mut terminal, &uirx, &mut cb) {
                 Err(e) => {
                     eprintln!("error render raw terminal {}", e);
                     return;
@@ -70,16 +73,16 @@ pub fn start_ui_handle(
 
 pub struct EventBusCallback(Sender<Event>);
 
-impl RawScreenCallback for EventBusCallback {
-    fn on_cmd(&mut self, _screen: &mut RawScreen, cmd: String) {
+impl WindowCallback for EventBusCallback {
+    fn on_cmd(&mut self, _screen: &mut Window, cmd: String) {
         self.0.send(Event::UserInputLine(cmd)).unwrap()
     }
 
-    fn on_script(&mut self, _screen: &mut RawScreen, script: String) {
+    fn on_script(&mut self, _screen: &mut Window, script: String) {
         self.0.send(Event::UserScriptLine(script)).unwrap();
     }
 
-    fn on_quit(&mut self, _screen: &mut RawScreen) {
+    fn on_quit(&mut self, _screen: &mut Window) {
         self.0.send(Event::Quit).unwrap();
     }
 }
@@ -123,12 +126,12 @@ pub fn start_from_server_handle(
 }
 
 pub struct Client {
-    uitx: Sender<RawScreenInput>,
+    uitx: Sender<WindowEvent>,
     srvtx: Sender<Packet>,
 }
 
 impl Client {
-    pub fn new(uitx: Sender<RawScreenInput>, srvtx: Sender<Packet>) -> Self {
+    pub fn new(uitx: Sender<WindowEvent>, srvtx: Sender<Packet>) -> Self {
         Self { uitx, srvtx }
     }
 }
@@ -140,16 +143,16 @@ impl EventHandler for Client {
             // 以下事件发送给UI线程处理
             Event::Tick => {
                 // todo: implements trigger by tick
-                self.uitx.send(RawScreenInput::Tick)?;
+                self.uitx.send(WindowEvent::Tick)?;
             }
             Event::TerminalKey(k) => {
-                self.uitx.send(RawScreenInput::Key(k))?;
+                self.uitx.send(WindowEvent::Key(k))?;
             }
             Event::TerminalMouse(m) => {
-                self.uitx.send(RawScreenInput::Mouse(m))?;
+                self.uitx.send(WindowEvent::Mouse(m))?;
             }
             Event::WindowResize => {
-                self.uitx.send(RawScreenInput::WindowResize)?;
+                self.uitx.send(WindowEvent::WindowResize)?;
             }
             // 以下事件交给运行时处理
             Event::LinesFromServer(lines) => {
@@ -193,7 +196,7 @@ impl RuntimeEventHandler for Client {
                 self.srvtx.send(Packet::Text(s))?;
             }
             RuntimeEvent::DisplayLines(lines) => {
-                self.uitx.send(RawScreenInput::Lines(lines.into_vec()))?;
+                self.uitx.send(WindowEvent::Lines(lines.into_vec()))?;
             }
         }
         Ok(NextStep::Run)

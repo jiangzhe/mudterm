@@ -1,11 +1,10 @@
-use crate::ui::span::ArcSpan;
+use crate::ui::span::Span;
 use crate::ui::style::{Color, Modifier, Style};
 use std::sync::Arc;
 
-/// todo: 尽可能使用Arc而不拷贝字符串
 /// 将ansi字符流转换为ArcSpan流
 #[derive(Debug)]
-pub struct SpanStream {
+pub struct AnsiParser {
     style: Style,
     // spaces_per_tab: usize,
     reserve_cr: bool,
@@ -14,7 +13,7 @@ pub struct SpanStream {
     next: usize,
 }
 
-impl SpanStream {
+impl AnsiParser {
     pub fn new() -> Self {
         Self {
             style: Style::default(),
@@ -40,7 +39,7 @@ impl SpanStream {
         }
     }
 
-    pub fn next_span(&mut self) -> Option<ArcSpan> {
+    pub fn next_span(&mut self) -> Option<Span> {
         loop {
             match self.next_snippet(self.next) {
                 Snippet::End => {
@@ -89,25 +88,25 @@ impl SpanStream {
         }
     }
 
-    fn parse_text(&self, start: usize) -> Option<(ArcSpan, usize)> {
+    fn parse_text(&self, start: usize) -> Option<(Span, usize)> {
         // probably parse the text
         let buf = self.buf.as_ref().cloned().unwrap();
         match buf.as_ref()[start..].find(|c| c == '\x1b' || c == '\n') {
             None => {
                 // 整体都是文本，且无断行
                 let buflen = buf.as_ref().len();
-                let span = ArcSpan::borrowed(buf, start, buflen, self.style);
+                let span = Span::borrowed(buf, start, buflen, self.style);
                 Some((span, buflen))
             }
             Some(pos) => {
                 let pos = start + pos;
                 let c = buf.as_ref().as_bytes()[pos];
                 if c == b'\x1b' {
-                    let span = ArcSpan::borrowed(buf, start, pos, self.style);
+                    let span = Span::borrowed(buf, start, pos, self.style);
                     Some((span, pos))
                 } else {
                     // 存在行结束符，包含结束符
-                    let span = ArcSpan::borrowed(buf, start, pos + 1, self.style);
+                    let span = Span::borrowed(buf, start, pos + 1, self.style);
                     Some((span, pos + 1))
                 }
             }
@@ -155,7 +154,7 @@ impl SpanStream {
 
 enum Snippet {
     Style(Style, usize),
-    Span(ArcSpan, usize),
+    Span(Span, usize),
     Incomplete,
     End,
 }
@@ -236,21 +235,21 @@ mod tests {
 
     #[test]
     fn test_ansi_span_stream() {
-        let mut ss = SpanStream::new();
+        let mut ss = AnsiParser::new();
         ss.fill("hello");
         assert_eq!(
-            Some(ArcSpan::owned("hello", Style::default())),
+            Some(Span::new("hello", Style::default())),
             ss.next_span()
         );
         assert_eq!(None, ss.next_span());
         assert!(ss.buf.is_none());
         ss.fill("hello\nworld");
         assert_eq!(
-            Some(ArcSpan::owned("hello\n", Style::default())),
+            Some(Span::new("hello\n", Style::default())),
             ss.next_span()
         );
         assert_eq!(
-            Some(ArcSpan::owned("world", Style::default())),
+            Some(Span::new("world", Style::default())),
             ss.next_span()
         );
         assert_eq!(None, ss.next_span());
@@ -259,7 +258,7 @@ mod tests {
         assert_eq!(Style::default().fg(Color::Gray), ss.style);
         ss.fill("hello");
         assert_eq!(
-            Some(ArcSpan::owned(
+            Some(Span::new(
                 "hello",
                 Style::default().fg(Color::Gray),
             )),
@@ -267,7 +266,7 @@ mod tests {
         );
         ss.fill("\x1b[mworld\n");
         assert_eq!(
-            Some(ArcSpan::owned("world\n", Style::default())),
+            Some(Span::new("world\n", Style::default())),
             ss.next_span()
         );
     }
@@ -278,7 +277,7 @@ mod tests {
         let mut s = String::new();
         let mut f = File::open("server.log").unwrap();
         f.read_to_string(&mut s).unwrap();
-        let mut ss = SpanStream::new();
+        let mut ss = AnsiParser::new();
         ss.fill(s);
         while let Some(span) = ss.next_span() {
             println!("span={:?}", span);
