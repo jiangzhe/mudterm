@@ -117,8 +117,8 @@ impl Runtime {
                 }
                 Target::Script => {
                     if let Err(e) = self.exec(cmd) {
-                        // self.queue.push_styled_line(StyledLine::err(e.to_string()));
-                        self.queue.push_line(RawLine::err(e.to_string()));
+                        let err = format_err(e.to_string());
+                        self.queue.push_line(RawLine::err(err));
                     }
                 }
             }
@@ -127,19 +127,19 @@ impl Runtime {
 
     pub fn process_user_scripts(&mut self, scripts: String) {
         if let Err(e) = self.exec(&scripts) {
-            // self.queue.push_styled_line(StyledLine::err(e.to_string()));
-            self.queue.push_line(RawLine::err(e.to_string()));
+            let err = format_err(e.to_string());
+            self.queue.push_line(RawLine::err(err));
         }
     }
 
-    pub fn process_mud_line(&mut self, line: RawLine) {
+    pub fn process_world_line(&mut self, line: RawLine) {
         // todo: apply triggers here
         self.queue.push_line(line);
     }
 
-    pub fn process_mud_lines(&mut self, lines: impl IntoIterator<Item = RawLine>) {
+    pub fn process_world_lines(&mut self, lines: impl IntoIterator<Item = RawLine>) {
         for line in lines {
-            self.process_mud_line(line);
+            self.process_world_line(line);
         }
     }
 
@@ -165,7 +165,7 @@ impl Runtime {
             lines.push(line);
         }
         // send to global event bus
-        self.evttx.send(Event::LinesFromMud(lines))?;
+        self.evttx.send(Event::WorldLines(lines))?;
         Ok(())
     }
 
@@ -239,6 +239,27 @@ impl Runtime {
         })?;
         Ok(())
     }
+}
+
+fn format_err(err: impl AsRef<str>) -> String {
+    let err = err.as_ref();
+    let err = if err.ends_with("\r\n") {
+        &err[..err.len() - 2]
+    } else if err.ends_with('\n') {
+        &err[..err.len() - 1]
+    } else {
+        &err
+    };
+    let mut s = String::new();
+    for p in err.split('\n') {
+        s.push_str(p);
+        if !p.ends_with('\r') {
+            s.push_str("\r\n");
+        } else {
+            s.push('\n');
+        }
+    }
+    s
 }
 
 #[derive(Debug, Clone)]
@@ -354,13 +375,13 @@ pub enum Target {
 }
 
 pub fn translate_cmds(
-    mut cmd: String,
+    cmd: String,
     delim: char,
     send_empty_cmd: bool,
     aliases: &[Alias],
 ) -> Vec<(Target, String)> {
-    if cmd.ends_with('\n') {
-        cmd.truncate(cmd.len() - 1);
+    if cmd.is_empty() {
+        return vec![(Target::World, String::new())];
     }
     let raw_lines: Vec<String> = cmd
         .split(|c| c == '\n' || c == delim)

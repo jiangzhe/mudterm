@@ -1,10 +1,24 @@
-use crate::ui::span::Span;
 use crate::ui::line::Line;
+use crate::ui::span::Span;
 use unicode_width::UnicodeWidthChar;
+
+pub trait DisplayWidthMaybeZero {
+    fn display_width(&self, cjk: bool) -> usize;
+}
+
+impl DisplayWidthMaybeZero for char {
+    fn display_width(&self, cjk: bool) -> usize {
+        if cjk {
+            self.width_cjk().unwrap_or(0)
+        } else {
+            self.width().unwrap_or(0)
+        }
+    }
+}
 
 pub trait AppendWidthTab8 {
     const TAB_SPACES: usize = 8;
-    
+
     // given previous width and cjk flag, returns next width
     fn append_width(&self, prev_width: usize, cjk: bool) -> usize;
 }
@@ -14,7 +28,12 @@ impl AppendWidthTab8 for char {
         if *self == '\t' {
             prev_width / Self::TAB_SPACES * Self::TAB_SPACES + Self::TAB_SPACES
         } else {
-            prev_width + if cjk { self.width_cjk().unwrap_or(0) } else { self.width().unwrap_or(0) }
+            prev_width
+                + if cjk {
+                    self.width_cjk().unwrap_or(0)
+                } else {
+                    self.width().unwrap_or(0)
+                }
         }
     }
 }
@@ -25,7 +44,11 @@ impl AppendWidthTab8 for str {
             if c == '\t' {
                 w / Self::TAB_SPACES * Self::TAB_SPACES + Self::TAB_SPACES
             } else {
-                w + if cjk { c.width_cjk().unwrap_or(0) } else { c.width_cjk().unwrap_or(0) }
+                w + if cjk {
+                    c.width_cjk().unwrap_or(0)
+                } else {
+                    c.width_cjk().unwrap_or(0)
+                }
             }
         })
     }
@@ -33,7 +56,7 @@ impl AppendWidthTab8 for str {
 
 impl AppendWidthTab8 for Span {
     fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
-        self.content().append_width(prev_width, cjk)
+        self.content.append_width(prev_width, cjk)
     }
 }
 
@@ -42,7 +65,6 @@ impl AppendWidthTab8 for Vec<Span> {
         self.iter().fold(prev_width, |w, s| s.append_width(w, cjk))
     }
 }
-
 
 impl AppendWidthTab8 for Line {
     fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
@@ -53,11 +75,9 @@ impl AppendWidthTab8 for Line {
 #[cfg(test)]
 mod tests {
     use super::AppendWidthTab8;
-    use crate::ui::span::Span;
     use crate::ui::line::Line;
+    use crate::ui::span::Span;
     use crate::ui::style::Style;
-    use std::io::Read;
-    use std::fs::File;
 
     #[test]
     fn test_append_width() {
@@ -69,7 +89,10 @@ mod tests {
         assert_eq!(11, s.append_width(0, true));
         let s = Line::fmt_raw("hello");
         assert_eq!(5, s.append_width(0, true));
-        let s = Line::new(vec![Span::new("hello", Style::default()), Span::new("\tworld", Style::default())]);
+        let s = Line::new(vec![
+            Span::new("hello", Style::default()),
+            Span::new("\tworld", Style::default()),
+        ]);
         assert_eq!(13, s.append_width(0, true));
     }
 }

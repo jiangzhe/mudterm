@@ -1,9 +1,7 @@
 use crate::ui::span::Span;
+use crate::ui::width::AppendWidthTab8;
 use std::collections::VecDeque;
 use std::sync::Arc;
-// use unicode_width::UnicodeWidthChar;
-use crate::ui::width::AppendWidthTab8;
-use std::io::Write;
 
 #[derive(Debug)]
 pub struct RawLine(Arc<str>, usize, usize);
@@ -26,7 +24,6 @@ impl Clone for RawLine {
         Self::owned(s)
     }
 }
-
 
 impl AsRef<str> for RawLine {
     fn as_ref(&self) -> &str {
@@ -159,7 +156,10 @@ impl Line {
     }
 
     pub fn ended(&self) -> bool {
-        self.spans.last().map(|s| s.content().ends_with('\n')).unwrap_or(false)
+        self.spans
+            .last()
+            .map(|s| s.content.ends_with('\n'))
+            .unwrap_or(false)
     }
 
     pub fn display_width(&self, cjk: bool) -> usize {
@@ -239,7 +239,6 @@ impl WrapLine {
 
 /// 根据指定行宽将单行拆解为多行，并添加到可变数组中
 pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>) {
-    // let mut lines = Vec::new();
     let mut curr_line = if lines.last().map(|l| !l.ended()).unwrap_or(false) {
         lines.pop().unwrap().spans
     } else {
@@ -248,7 +247,7 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
     let mut curr_width = curr_line.append_width(0, cjk);
     for span in &line.spans {
         // 判断宽度是否超过限制
-        let next_width = span.append_width(curr_width, cjk); 
+        let next_width = span.append_width(curr_width, cjk);
         if next_width <= max_width {
             // 合并到当前行
             append_span(&mut curr_line, span.clone());
@@ -263,7 +262,7 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
             let new_style = span.style;
             // let new_ended = span.ended;
             let mut new_content = String::new();
-            for c in span.content().chars() {
+            for c in span.content.chars() {
                 // let cw = if cjk { c.width_cjk() } else { c.width() }.unwrap_or(0);
                 let next_width = c.append_width(curr_width, cjk);
                 if next_width <= max_width {
@@ -300,7 +299,7 @@ fn append_span(line: &mut Vec<Span>, span: Span) {
     if let Some(last_span) = line.last_mut() {
         if last_span.style == span.style {
             // 仅当格式相同时合并
-            last_span.push_str(span.content());
+            last_span.push_str(span.content);
             return;
         }
     }

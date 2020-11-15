@@ -1,7 +1,7 @@
 use crate::codec::Codec;
 use crate::error::Result;
 use crate::runtime::Runtime;
-use crate::ui::line::{RawLine, RawLines};
+use crate::ui::line::{Line, RawLine, RawLines};
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::VecDeque;
 use std::net::{SocketAddr, TcpStream};
@@ -13,10 +13,12 @@ pub enum Event {
     /// raw bytes received from server
     /// decode it in main loop so that we can
     /// handle codec switching peacefully
-    BytesFromMud(Vec<u8>),
+    WorldBytes(Vec<u8>),
     /// lines from server with tui style
     // StyledLinesFromMud(VecDeque<StyledLine>),
-    LinesFromMud(Vec<RawLine>),
+    WorldLines(Vec<RawLine>),
+    // world disconnected, e.g idle for a lone time
+    WorldDisconnected,
     /// user input line
     UserInputLine(String),
     /// user script line will be sent to script
@@ -29,7 +31,7 @@ pub enum Event {
     Quit,
     /// raw bytes following telnet protocol, should
     /// be sent to server directly
-    TelnetBytesToMud(Vec<u8>),
+    TelnetBytes(Vec<u8>),
     // new client connected
     NewClient(TcpStream, SocketAddr),
     // client authentication fail

@@ -6,9 +6,8 @@ use crate::runtime::Runtime;
 use crate::signal;
 use crate::ui::line::RawLine;
 use crate::ui::terminal::Terminal;
-use crate::ui::{RawScreen, RawScreenCallback, RawScreenInput};
+use crate::ui::window::{Window, WindowCallback, WindowEvent};
 use crate::userinput;
-use crate::ui::window::{Window, WindowEvent, WindowCallback};
 use crossbeam_channel::{unbounded, Sender};
 use std::{io, thread};
 
@@ -53,7 +52,7 @@ pub fn start_ui_handle(
                 terminal
             }
         };
-        
+
         loop {
             match window.render(&mut terminal, &uirx, &mut cb) {
                 Err(e) => {
@@ -156,7 +155,7 @@ impl EventHandler for Client {
             }
             // 以下事件交给运行时处理
             Event::LinesFromServer(lines) => {
-                rt.process_mud_lines(lines);
+                rt.process_world_lines(lines);
             }
             Event::UserInputLine(cmd) => {
                 rt.preprocess_user_cmd(cmd);
@@ -175,9 +174,10 @@ impl EventHandler for Client {
             | Event::ClientAuthFail
             | Event::ClientAuthSuccess(_)
             | Event::ClientDisconnect
-            | Event::TelnetBytesToMud(_)
-            | Event::BytesFromMud(_)
-            | Event::LinesFromMud(_) => {
+            | Event::TelnetBytes(_)
+            | Event::WorldBytes(_)
+            | Event::WorldLines(_)
+            | Event::WorldDisconnected => {
                 unreachable!("standalone mode does not support event {:?}", evt);
             }
         }

@@ -95,18 +95,18 @@ impl AnsiParser {
             None => {
                 // 整体都是文本，且无断行
                 let buflen = buf.as_ref().len();
-                let span = Span::borrowed(buf, start, buflen, self.style);
+                let span = Span::new(&buf[start..buflen], self.style);
                 Some((span, buflen))
             }
             Some(pos) => {
                 let pos = start + pos;
                 let c = buf.as_ref().as_bytes()[pos];
                 if c == b'\x1b' {
-                    let span = Span::borrowed(buf, start, pos, self.style);
+                    let span = Span::new(&buf[start..pos], self.style);
                     Some((span, pos))
                 } else {
                     // 存在行结束符，包含结束符
-                    let span = Span::borrowed(buf, start, pos + 1, self.style);
+                    let span = Span::new(&buf[start..pos + 1], self.style);
                     Some((span, pos + 1))
                 }
             }
@@ -237,38 +237,23 @@ mod tests {
     fn test_ansi_span_stream() {
         let mut ss = AnsiParser::new();
         ss.fill("hello");
-        assert_eq!(
-            Some(Span::new("hello", Style::default())),
-            ss.next_span()
-        );
+        assert_eq!(Some(Span::new("hello", Style::default())), ss.next_span());
         assert_eq!(None, ss.next_span());
         assert!(ss.buf.is_none());
         ss.fill("hello\nworld");
-        assert_eq!(
-            Some(Span::new("hello\n", Style::default())),
-            ss.next_span()
-        );
-        assert_eq!(
-            Some(Span::new("world", Style::default())),
-            ss.next_span()
-        );
+        assert_eq!(Some(Span::new("hello\n", Style::default())), ss.next_span());
+        assert_eq!(Some(Span::new("world", Style::default())), ss.next_span());
         assert_eq!(None, ss.next_span());
         ss.fill("\x1b[37m");
         assert_eq!(None, ss.next_span());
         assert_eq!(Style::default().fg(Color::Gray), ss.style);
         ss.fill("hello");
         assert_eq!(
-            Some(Span::new(
-                "hello",
-                Style::default().fg(Color::Gray),
-            )),
+            Some(Span::new("hello", Style::default().fg(Color::Gray),)),
             ss.next_span()
         );
         ss.fill("\x1b[mworld\n");
-        assert_eq!(
-            Some(Span::new("world\n", Style::default())),
-            ss.next_span()
-        );
+        assert_eq!(Some(Span::new("world\n", Style::default())), ss.next_span());
     }
     use std::fs::File;
     use std::io::Read;

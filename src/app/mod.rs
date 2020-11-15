@@ -35,7 +35,7 @@ pub fn standalone(config: Config) -> Result<()> {
 
     // 3. start io threads
     eprintln!("starting thread handling message to mud server");
-    let worldtx = server::start_to_mud_handle(to_mud);
+    let worldtx = server::start_to_mud_handle(evttx.clone(), to_mud);
     eprintln!("starting thread handling message from mud server");
     server::start_from_mud_handle(evttx.clone(), from_mud);
 
@@ -137,7 +137,7 @@ pub fn server(config: Config) -> Result<()> {
 
     // 4. start io threads for mud communication
     eprintln!("starting thread handling message to mud server");
-    let worldtx = server::start_to_mud_handle(to_mud);
+    let worldtx = server::start_to_mud_handle(evttx.clone(), to_mud);
     eprintln!("starting thread handling message from mud server");
     server::start_from_mud_handle(evttx, from_mud);
 

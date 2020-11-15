@@ -13,27 +13,31 @@ use std::{io, thread};
 /// 启动线程接收MUD消息
 pub fn start_from_mud_handle(evttx: Sender<Event>, from_mud: impl io::Read + Send + 'static) {
     thread::spawn(move || {
-        let mut inbound = Telnet::new(from_mud, 4096);
+        let mut telnet = Telnet::new(from_mud, 4096);
         loop {
-            match inbound.recv() {
+            match telnet.recv() {
                 Err(e) => {
-                    eprintln!("channel receive inbound message error {}", e);
+                    eprintln!("channel receive telnet message error {}", e);
                     return;
                 }
                 Ok(TelnetEvent::Disconnected) => {
                     // once disconnected, stop the thread
+                    evttx.send(Event::WorldDisconnected).unwrap();
                     break;
                 }
                 Ok(TelnetEvent::Empty) => (),
-                Ok(TelnetEvent::DataToSend(bs)) => evttx.send(Event::TelnetBytesToMud(bs)).unwrap(),
-                Ok(TelnetEvent::Text(bs)) => evttx.send(Event::BytesFromMud(bs)).unwrap(),
+                Ok(TelnetEvent::DataToSend(bs)) => evttx.send(Event::TelnetBytes(bs)).unwrap(),
+                Ok(TelnetEvent::Text(bs)) => evttx.send(Event::WorldBytes(bs)).unwrap(),
             }
         }
     });
 }
 
 /// 启动线程发送MUD消息
-pub fn start_to_mud_handle(to_mud: impl io::Write + Send + 'static) -> Sender<Vec<u8>> {
+pub fn start_to_mud_handle(
+    evttx: Sender<Event>,
+    to_mud: impl io::Write + Send + 'static,
+) -> Sender<Vec<u8>> {
     let (tx, rx) = unbounded::<Vec<u8>>();
     thread::spawn(move || {
         let mut outbound = Outbound::new(to_mud);
@@ -41,6 +45,7 @@ pub fn start_to_mud_handle(to_mud: impl io::Write + Send + 'static) -> Sender<Ve
             match rx.recv() {
                 Err(e) => {
                     eprintln!("{}", e);
+                    evttx.send(Event::WorldDisconnected).unwrap();
                     return;
                 }
                 Ok(bs) => {
@@ -148,7 +153,6 @@ impl Server {
 impl EventHandler for Server {
     fn on_event(&mut self, evt: Event, rt: &mut Runtime) -> Result<NextStep> {
         match evt {
-            Event::Quit => return Ok(NextStep::Quit),
             Event::NewClient(conn, addr) => {
                 eprintln!("client connected from {:?}", addr);
                 if let Some((_, ref addr)) = self.to_cli {
@@ -183,15 +187,15 @@ impl EventHandler for Server {
                 self.to_cli.take();
             }
             // 直接发送给MUD
-            Event::TelnetBytesToMud(bs) => {
+            Event::TelnetBytes(bs) => {
                 self.worldtx.send(bs)?;
             }
             // 以下事件交给运行时处理
-            Event::BytesFromMud(bs) => {
+            Event::WorldBytes(bs) => {
                 rt.process_bytes_from_mud(&bs)?;
             }
-            Event::LinesFromMud(lines) => {
-                rt.process_mud_lines(lines);
+            Event::WorldLines(lines) => {
+                rt.process_world_lines(lines);
             }
             Event::UserInputLine(cmd) => {
                 rt.preprocess_user_cmd(cmd);
@@ -199,7 +203,12 @@ impl EventHandler for Server {
             Event::Tick => {
                 // todo: implements trigger by tick
             }
-            Event::LinesFromServer(_)
+            Event::WorldDisconnected => {
+                eprintln!("world down or disconnected, shutdown server");
+                return Ok(NextStep::Quit);
+            }
+            Event::Quit
+            | Event::LinesFromServer(_)
             | Event::TerminalKey(_)
             | Event::TerminalMouse(_)
             | Event::WindowResize

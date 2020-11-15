@@ -21,7 +21,11 @@ impl Default for Style {
 
 impl std::fmt::Display for Style {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.fg.is_none() && self.bg.is_none() && self.add_modifier.is_empty() && self.sub_modifier.is_empty() {
+        if self.fg.is_none()
+            && self.bg.is_none()
+            && self.add_modifier.is_empty()
+            && self.sub_modifier.is_empty()
+        {
             write!(f, "\x1b[m")?;
             return Ok(());
         }
@@ -29,48 +33,48 @@ impl std::fmt::Display for Style {
         let mut require_colon = false;
         if let Some(fg) = self.fg {
             match fg {
-                Color::Reset            => write!(f, "39")?,
-                Color::Black            => write!(f, "30")?,
-                Color::Red                 => write!(f, "31")?,         
-                Color::Green            => write!(f, "32")?,
-                Color::Yellow            => write!(f, "33")?,
-                Color::Blue            => write!(f, "34")?,
-                Color::Magenta            => write!(f, "35")?,
-                Color::Cyan            => write!(f, "36")?,
-                Color::Gray            => write!(f, "37")?,
-                Color::DarkGray            => write!(f, "90")?,
-                Color::LightRed            => write!(f, "91")?,
-                Color::LightGreen            => write!(f, "92")?,
-                Color::LightYellow            => write!(f, "93")?,
-                Color::LightBlue            => write!(f, "94")?,
-                Color::LightMagenta            => write!(f, "95")?,
-                Color::LightCyan            => write!(f, "96")?,
-                Color::White            => write!(f, "97")?,
+                Color::Reset => write!(f, "39")?,
+                Color::Black => write!(f, "30")?,
+                Color::Red => write!(f, "31")?,
+                Color::Green => write!(f, "32")?,
+                Color::Yellow => write!(f, "33")?,
+                Color::Blue => write!(f, "34")?,
+                Color::Magenta => write!(f, "35")?,
+                Color::Cyan => write!(f, "36")?,
+                Color::Gray => write!(f, "37")?,
+                Color::DarkGray => write!(f, "90")?,
+                Color::LightRed => write!(f, "91")?,
+                Color::LightGreen => write!(f, "92")?,
+                Color::LightYellow => write!(f, "93")?,
+                Color::LightBlue => write!(f, "94")?,
+                Color::LightMagenta => write!(f, "95")?,
+                Color::LightCyan => write!(f, "96")?,
+                Color::White => write!(f, "97")?,
             }
             require_colon = true;
         }
-        if let Some(fg) = self.fg {
+        if let Some(bg) = self.bg {
             if require_colon {
                 write!(f, ";")?;
             }
-            match fg {
-                Color::Reset            => write!(f, "49")?,
-                Color::Black            => write!(f, "40")?,
-                Color::Red                 => write!(f, "41")?,         
-                Color::Green            => write!(f, "42")?,
-                Color::Yellow            => write!(f, "43")?,
-                Color::Blue            => write!(f, "44")?,
-                Color::Magenta            => write!(f, "45")?,
-                Color::Cyan            => write!(f, "46")?,
-                Color::Gray            => write!(f, "47")?,
-                Color::DarkGray            => write!(f, "100")?,
-                Color::LightRed            => write!(f, "101")?,
-                Color::LightGreen            => write!(f, "102")?,
-                Color::LightYellow            => write!(f, "103")?,
-                Color::LightBlue            => write!(f, "104")?,
-                Color::LightMagenta            => write!(f, "105")?,
-                Color::LightCyan            => write!(f, "106")?,
-                Color::White            => write!(f, "107")?,
+            match bg {
+                Color::Reset => write!(f, "49")?,
+                Color::Black => write!(f, "40")?,
+                Color::Red => write!(f, "41")?,
+                Color::Green => write!(f, "42")?,
+                Color::Yellow => write!(f, "43")?,
+                Color::Blue => write!(f, "44")?,
+                Color::Magenta => write!(f, "45")?,
+                Color::Cyan => write!(f, "46")?,
+                Color::Gray => write!(f, "47")?,
+                Color::DarkGray => write!(f, "100")?,
+                Color::LightRed => write!(f, "101")?,
+                Color::LightGreen => write!(f, "102")?,
+                Color::LightYellow => write!(f, "103")?,
+                Color::LightBlue => write!(f, "104")?,
+                Color::LightMagenta => write!(f, "105")?,
+                Color::LightCyan => write!(f, "106")?,
+                Color::White => write!(f, "107")?,
             }
             require_colon = true;
         }
@@ -140,7 +144,7 @@ impl std::fmt::Display for Style {
             }
         }
         write!(f, "m")?;
-        
+
         Ok(())
     }
 }
@@ -222,8 +226,14 @@ mod tests {
     use super::*;
     #[test]
     fn test_display_style() {
-        let s = format!("{}hello{}world", Style::default().fg(Color::Red).bg(Color::Green).add_modifier(Modifier::SLOW_BLINK), Style::default().add_modifier(Modifier::REVERSED));
+        let s = format!(
+            "{}hello{}world",
+            Style::default()
+                .fg(Color::Red)
+                .bg(Color::Green)
+                .add_modifier(Modifier::SLOW_BLINK),
+            Style::default().add_modifier(Modifier::REVERSED)
+        );
         println!("{}", s);
-
     }
 }

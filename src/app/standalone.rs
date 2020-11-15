@@ -1,8 +1,8 @@
 use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, RuntimeEventHandler};
 use crate::runtime::Runtime;
+use crate::ui::line::RawLine;
 use crate::ui::window::WindowEvent;
-use crate::ui::RawScreenInput;
 use crossbeam_channel::Sender;
 use std::thread;
 
@@ -24,7 +24,7 @@ impl EventHandler for Standalone {
         match evt {
             Event::Quit => return Ok(NextStep::Quit),
             // 直接发送给MUD
-            Event::TelnetBytesToMud(bs) => {
+            Event::TelnetBytes(bs) => {
                 self.worldtx.send(bs)?;
             }
             // 以下事件发送给UI线程处理
@@ -42,17 +42,23 @@ impl EventHandler for Standalone {
                 self.uitx.send(WindowEvent::WindowResize)?;
             }
             // 以下事件交给运行时处理
-            Event::BytesFromMud(bs) => {
+            Event::WorldBytes(bs) => {
                 rt.process_bytes_from_mud(&bs)?;
             }
-            Event::LinesFromMud(lines) => {
-                rt.process_mud_lines(lines);
+            Event::WorldLines(lines) => {
+                rt.process_world_lines(lines);
             }
             Event::UserInputLine(cmd) => {
                 rt.preprocess_user_cmd(cmd);
             }
             Event::UserScriptLine(s) => {
                 rt.process_user_scripts(s);
+            }
+            Event::WorldDisconnected => {
+                eprintln!("world down or not reachable");
+                // let user quit
+                rt.queue
+                    .push_line(RawLine::err("与服务器断开了连接，请关闭并重新连接"));
             }
             // standalone模式不支持客户端连接，待增强
             Event::NewClient(..)

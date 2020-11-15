@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::event::Event;
-use crate::ui::RawScreenInput;
+use crate::ui::window::WindowEvent;
 use crossbeam_channel::Sender;
 use std::io;
 use termion::event::Event as TEvent;
@@ -22,15 +22,15 @@ pub fn subscribe_userinput(tx: Sender<Event>) -> Result<()> {
     Ok(())
 }
 
-pub fn subscribe_userinput_for_ui(tx: Sender<RawScreenInput>) -> Result<()> {
+pub fn subscribe_userinput_for_ui(tx: Sender<WindowEvent>) -> Result<()> {
     let stdin = io::stdin();
     for evt in stdin.events() {
         match evt? {
             TEvent::Key(key) => {
-                tx.send(RawScreenInput::Key(key)).unwrap();
+                tx.send(WindowEvent::Key(key)).unwrap();
             }
             TEvent::Mouse(mouse) => {
-                tx.send(RawScreenInput::Mouse(mouse)).unwrap();
+                tx.send(WindowEvent::Mouse(mouse)).unwrap();
             }
             _ => (),
         }

@@ -1,25 +1,42 @@
-
 use crate::conf;
 use crate::error::Result;
-use crate::ui::line::{WrapLine, Line, RawLine};
-use crate::ui::style::Style;
-use crate::ui::span::Span;
+use crate::ui::ansi::AnsiParser;
+use crate::ui::line::{Line, RawLine, WrapLine};
+use crate::ui::widget::Widget;
+use crossbeam_channel::Receiver;
 use std::collections::VecDeque;
 use std::io::Write;
 use termion::event::{Key, MouseButton, MouseEvent};
-use termion::terminal_size;
-use crate::ui::ansi::AnsiParser;
-use crossbeam_channel::Receiver;
-
-const HORIZONTAL: &str = "─";
 
 pub struct Window {
-    pub cmd: String,
-    pub script_prefix: char,
-    pub script_mode: bool,
-    pub flow: Flow,
-
+    cmd: String,
+    script_prefix: char,
+    script_mode: bool,
+    flow: Flow,
 }
+
+// impl Widget for Window {
+//     fn draw<W: Write>(&mut self, terminal: &mut W, cjk: bool) -> Result<()> {
+//         let (lines, partial_ready) = self.next_lines();
+//         if !partial_ready && lines.is_empty() {
+//             return Ok(());
+//         }
+//         self.erase_cmdline(terminal)?;
+//         if partial_ready {
+//             write!(terminal, "{}{}", termion::cursor::Up(1), termion::clear::CurrentLine)?;
+//         }
+//         let last_end = lines.last().map(|l| l.ended()).unwrap_or(true);
+//         for line in lines {
+//             write!(terminal, "{}", line.as_ref())?;
+//         }
+//         if !last_end {
+//             write!(terminal, "\r\n")?;
+//         }
+//         // 命令行
+//         self.draw_cmdline(terminal)?;
+//         Ok(())
+//     }
+// }
 
 impl Window {
     pub fn new(width: usize, height: usize, termconf: conf::Term) -> Self {
@@ -31,49 +48,54 @@ impl Window {
         }
     }
 
-    fn push_line(&mut self, line: RawLine) {
+    #[inline]
+    pub fn push_line(&mut self, line: RawLine) {
         self.flow.push_line(line);
     }
 
-    fn push_lines(&mut self, lines: impl IntoIterator<Item=RawLine>) {
+    #[inline]
+    pub fn push_lines(&mut self, lines: impl IntoIterator<Item = RawLine>) {
         self.flow.push_lines(lines)
     }
 
-    fn draw_cmdline<W: Write>(&mut self, terminal: &mut W) -> Result<()> {
-        self.script_mode(terminal)?;
-        write!(terminal, "{}", self.cmd)?;
-        Ok(())
+    #[inline]
+    fn drain_cmd(&mut self) -> String {
+        std::mem::replace(&mut self.cmd, String::new())
     }
 
-    fn script_mode<W: Write>(&self, terminal: &mut W) -> Result<()> {
+    fn draw_cmdline<W: Write>(&mut self, terminal: &mut W) -> Result<()> {
+        write!(terminal, "{}\r\n", termion::style::Reset)?;
         if self.script_mode {
             write!(terminal, "{}", termion::color::Bg(termion::color::Blue))?;
         } else {
             write!(terminal, "{}", termion::color::Bg(termion::color::Reset))?;
         }
         write!(terminal, "{}", termion::clear::CurrentLine)?;
+        write!(terminal, "{}", self.cmd)?;
+        Ok(())
+    }
+
+    fn erase_cmdline<W: Write>(&mut self, terminal: &mut W) -> Result<()> {
+        // 当前行
+        write!(
+            terminal,
+            "\r{}{}",
+            termion::style::Reset,
+            termion::clear::CurrentLine
+        )?;
+        // 上一行
+        write!(
+            terminal,
+            "{}{}{}",
+            termion::cursor::Up(1),
+            termion::style::Reset,
+            termion::clear::CurrentLine
+        )?;
         Ok(())
     }
 
     fn next_lines(&mut self) -> (Vec<RawLine>, bool) {
         self.flow.next_lines()
-    }
-
-    pub fn draw<W: Write>(&mut self, terminal: &mut W) -> Result<()> {
-        let (lines, partial_ready) = self.next_lines();
-        write!(terminal, "\r{}", termion::clear::CurrentLine)?;
-        write!(terminal, "{}{}", termion::cursor::Up(1), termion::clear::CurrentLine)?;
-        if partial_ready {
-            write!(terminal, "{}{}", termion::cursor::Up(1), termion::clear::CurrentLine)?;
-        }
-        for line in lines {
-            write!(terminal, "{}", line.as_ref())?;
-        }
-        // 空一行到命令行
-        write!(terminal, "{}\r\n\r\n", termion::style::Reset)?;
-        // 命令行
-        self.draw_cmdline(terminal)?;
-        Ok(())
     }
 
     pub fn render<W: Write, C: WindowCallback>(
@@ -86,17 +108,17 @@ impl Window {
             WindowEvent::Key(key) => match key {
                 Key::Char('\n') => {
                     if self.script_mode {
-                        let script = std::mem::replace(&mut self.cmd, String::new());
+                        let script = self.drain_cmd();
                         self.script_mode = false;
                         cb.on_script(self, script)
                     } else {
-                        let cmd = std::mem::replace(&mut self.cmd, String::new());
+                        let cmd = self.drain_cmd();
                         cb.on_cmd(self, cmd);
                     }
                 }
                 Key::Char(c) if c == self.script_prefix && self.cmd.is_empty() => {
                     self.script_mode = true;
-                    self.script_mode(terminal)?;
+                    self.draw_cmdline(terminal)?;
                     terminal.flush()?;
                     return Ok(false);
                 }
@@ -112,7 +134,13 @@ impl Window {
                             // turn off script mode
                             self.script_mode = false;
                         }
-                        write!(terminal, "\r{}{}", termion::clear::CurrentLine, &self.cmd)?;
+                        write!(
+                            terminal,
+                            "\r{}{}",
+                            termion::style::Reset,
+                            termion::clear::CurrentLine
+                        )?;
+                        self.draw_cmdline(terminal)?;
                         terminal.flush()?;
                     }
                     return Ok(false);
@@ -130,26 +158,23 @@ impl Window {
             },
             WindowEvent::Lines(lines) => self.push_lines(lines),
             WindowEvent::Line(line) => self.push_line(line),
-            // WindowEvent::Mouse(MouseEvent::Press(MouseButton::WheelUp, ..))
-            //     if !self.auto_follow =>
-            // {
-            //     if self.scroll.0 > 0 {
-            //         self.scroll.0 -= 1;
-            //     }
-            // }
-            // WindowEvent::Mouse(MouseEvent::Press(MouseButton::WheelDown, ..))
-            //     if !self.auto_follow =>
-            // {
-            //     // increase scroll means searching newer messages
-            //     self.scroll.0 += 1;
-            // }
+            WindowEvent::Mouse(MouseEvent::Press(MouseButton::WheelUp, ..)) => {
+                write!(terminal, "{}", termion::scroll::Down(1))?;
+                terminal.flush()?;
+                return Ok(false);
+            }
+            WindowEvent::Mouse(MouseEvent::Press(MouseButton::WheelDown, ..)) => {
+                write!(terminal, "{}", termion::scroll::Up(1))?;
+                terminal.flush()?;
+                return Ok(false);
+            }
             WindowEvent::Mouse(_) => {
                 // not to render the screen
                 return Ok(false);
             }
             WindowEvent::Tick | WindowEvent::WindowResize => (),
         }
-        self.draw(terminal)?;
+        // self.draw(terminal, true)?;
         terminal.flush()?;
         Ok(false)
     }
@@ -162,7 +187,6 @@ pub trait WindowCallback {
 
     fn on_quit(&mut self, window: &mut Window);
 }
-
 
 #[derive(Debug, Clone)]
 pub enum WindowEvent {
@@ -179,37 +203,40 @@ pub struct Flow {
     height: usize,
     max_lines: usize,
     raw: VecDeque<RawLine>,
-    // display: VecDeque<WrapLine>,
-    // parser: AnsiParser,
+    display: VecDeque<WrapLine>,
+    parser: AnsiParser,
     ready: usize,
     partial_ready: bool,
 }
 
 impl Flow {
-
     pub fn new(width: usize, height: usize, max_lines: usize) -> Self {
         debug_assert!(max_lines >= height);
         let mut raw = VecDeque::new();
-        // let mut parsed = VecDeque::new();
-        let empty_raw =  RawLine::owned(String::from("\r\n"));
-        // let empty_parsed = WrapLine(vec![Line::fmt_raw("")]);
+        let mut parsed = VecDeque::new();
+        let empty_raw = RawLine::owned(String::from("\r\n"));
+        let empty_parsed = WrapLine(vec![Line::fmt_raw("")]);
         for _ in 0..height {
             raw.push_back(empty_raw.clone());
-            // parsed.push_back(empty_parsed.clone());
+            parsed.push_back(empty_parsed.clone());
         }
-        Self{
+        Self {
             width,
             height,
             max_lines,
             raw,
-            // display: parsed,
-            // parser: AnsiParser::new(),
+            display: parsed,
+            parser: AnsiParser::new(),
             ready: height,
             partial_ready: false,
         }
     }
 
     pub fn push_line(&mut self, line: RawLine) {
+        // 解析序列
+        self.parse_ansi_line(line.content());
+
+        // 原ansi字符序列
         if let Some(last_line) = self.raw.back_mut() {
             if !last_line.ended() {
                 last_line.push_line(line);
@@ -224,7 +251,24 @@ impl Flow {
         }
     }
 
-    pub fn push_lines(&mut self, lines: impl IntoIterator<Item=RawLine>) {
+    fn parse_ansi_line(&mut self, line: impl AsRef<str>) {
+        self.parser.fill(line.as_ref());
+        while let Some(span) = self.parser.next_span() {
+            let last_line = self.display.back_mut().unwrap();
+            if !last_line.ended() {
+                last_line.push_span(span, self.width, true);
+            } else {
+                let line = Line::single(span);
+                let wl = line.wrap(self.width, true);
+                self.display.push_back(wl);
+            }
+        }
+        while self.display.len() > self.max_lines {
+            self.display.pop_front();
+        }
+    }
+
+    pub fn push_lines(&mut self, lines: impl IntoIterator<Item = RawLine>) {
         for line in lines {
             self.push_line(line);
         }
@@ -242,21 +286,21 @@ impl Flow {
         (lines, partial_ready)
     }
 
-    // pub fn wrap_lines(&self) -> Vec<WrapLine> {
-    //     self.display.iter().cloned().collect()
-    // }
+    pub fn replay_lines(&mut self) -> Vec<RawLine> {
+        let lines = self
+            .raw
+            .iter()
+            .rev()
+            .take(self.height)
+            .cloned()
+            .rev()
+            .collect();
+        self.partial_ready = false;
+        self.ready = 0;
+        lines
+    }
 
-    // fn push_span(&mut self, span: Span) {
-    //     if let Some(last_line) = self.display.back_mut() {
-    //         if !last_line.ended() {
-    //             last_line.push_span(span, self.width, true);
-    //             return;
-    //         }
-    //     }
-    //     let line = Line::new(vec![span]);
-    //     self.display.push_back(line.wrap(self.width, true));
-    //     while self.display.len() > self.height {
-    //         self.display.pop_front();
-    //     }
-    // }
+    pub fn line_by_offset(&self, offset: usize) -> Option<RawLine> {
+        self.raw.iter().rev().nth(offset).cloned()
+    }
 }
