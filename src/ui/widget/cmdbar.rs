@@ -2,8 +2,7 @@ use crate::error::Result;
 use crate::ui::buffer::Buffer;
 use crate::ui::layout::Rect;
 use crate::ui::style::Style;
-use crate::ui::widget::border;
-use crate::ui::widget::Widget;
+use crate::ui::widget::{Block, Widget};
 use crate::ui::width::AppendWidthTab8;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,18 +15,22 @@ pub enum CmdOut {
 #[derive(Debug)]
 pub struct CmdBar {
     cmd: String,
+    block: Block,
     style: Style,
     script_mode: bool,
     script_prefix: char,
+    cjk: bool,
 }
 
 impl CmdBar {
-    pub fn new(script_prefix: char) -> Self {
+    pub fn new(script_prefix: char, cjk: bool) -> Self {
         Self {
             cmd: String::new(),
+            block: Block::default().cjk(cjk),
             style: Style::default(),
             script_mode: false,
             script_prefix,
+            cjk,
         }
     }
 
@@ -69,16 +72,17 @@ impl CmdBar {
 }
 
 impl Widget for CmdBar {
-    fn refresh_buffer<B: Buffer>(&mut self, buf: &mut B, cjk: bool) -> Result<()> {
-        border::Border::Square.refresh_buffer(buf, cjk)?;
-        let area = border::inner_area(*buf.area(), cjk);
+    fn refresh_buffer<B: Buffer>(&mut self, buf: &mut B) -> Result<()> {
+        self.block.refresh_buffer(buf)?;
+
+        let bararea = self.block.inner_area(*buf.area());
         buf.set_line_str(
-            area.left(),
-            area.top(),
+            bararea.left(),
+            bararea.top(),
             &self.cmd,
-            area.right(),
+            bararea.right(),
             self.style,
-            cjk,
+            self.cjk,
         );
         Ok(())
     }

@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ui::buffer::BufferVec;
 use crate::ui::buffer::{Buffer, Cell};
 use crate::ui::layout::Rect;
@@ -46,11 +46,10 @@ impl Terminal {
         &mut self,
         widget: &mut W,
         area: Rect,
-        cjk: bool,
     ) -> Result<()> {
         let curr_buffer = self.curr_buf_mut();
         let mut subset = curr_buffer.subset(area)?;
-        widget.refresh_buffer(&mut subset, cjk)?;
+        widget.refresh_buffer(&mut subset)?;
         Ok(())
     }
 
@@ -58,14 +57,20 @@ impl Terminal {
         &mut self.curr_buf
     }
 
-    pub fn flush(&mut self, areas: impl IntoIterator<Item=Rect>) -> Result<()> {
+    /// 指定区域更新终端
+    ///
+    /// 需要注意的是，由于采用双缓存比对方式，在调用flush前需保证当前缓存
+    /// 已保存屏幕完整信息
+    pub fn flush(&mut self, areas: impl IntoIterator<Item = Rect>) -> Result<()> {
         let mut updates = vec![];
+        let curr_buf = &mut self.curr_buf;
+        let prev_buf = &mut self.prev_buf;
         for area in areas {
-            let prev_buf = &self.prev_buf.subset(area)?;
-            let curr_buf = &self.curr_buf.subset(area)?;
-            prev_buf.diff(curr_buf, &mut updates);
+            let curr_buf = curr_buf.subset(area)?;
+            let prev_buf = prev_buf.subset(area)?;
+            prev_buf.diff(&curr_buf, &mut updates);
         }
-        // eprintln!("updates={:#?}", updates);
+        eprintln!("updates={:#?}", updates);
         draw_updates(&mut self.out, updates)?;
         self.out.flush()?;
         std::mem::swap(&mut self.prev_buf, &mut self.curr_buf);
@@ -80,14 +85,14 @@ impl Terminal {
     }
 }
 
-fn draw_updates<W: Write>(out: &mut W, updates: Vec<(u16, u16, &Cell)>) -> Result<()> {
+fn draw_updates<W: Write>(out: &mut W, updates: Vec<(u16, u16, Cell)>) -> Result<()> {
     let mut next_x: u16 = 0;
     let mut next_y: u16 = 0;
     for (x, y, cell) in updates {
         if x != next_x || y != next_y {
             write!(out, "{}", termion::cursor::Goto(x, y))?;
         }
-        write!(out, "{}", cell.symbol.ch)?;
+        write!(out, "{}{}", cell.style(), cell.symbol.ch)?;
         next_x = x;
         next_y = y + cell.symbol.width as u16;
     }

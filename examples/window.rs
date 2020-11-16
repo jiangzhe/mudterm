@@ -6,8 +6,8 @@ use mudterm::ui::layout::Rect;
 use mudterm::ui::line::{Line, RawLine, RawLines};
 use mudterm::ui::style::{Color, Style};
 use mudterm::ui::terminal::Terminal;
-use mudterm::ui::widget::border::Border;
 use mudterm::ui::widget::cmdbar::CmdBar;
+use mudterm::ui::widget::Block;
 use mudterm::ui::widget::Widget;
 use std::collections::VecDeque;
 use std::fs::File;
@@ -39,7 +39,7 @@ fn run4() -> Result<()> {
     let mut terminal = Terminal::init()?;
     // let mut buf = String::new();
     let (width, height) = termion::terminal_size()?;
-    let mut cmdbar = CmdBar::new();
+    let mut cmdbar = CmdBar::new(Block::default(), '.');
     let area = Rect {
         x: 1,
         y: height - 2,
@@ -48,19 +48,19 @@ fn run4() -> Result<()> {
     };
     terminal.render_widget(&mut cmdbar, area, true)?;
     let (cursor_x, cursor_y) = cmdbar.cursor_pos(area, true);
-    terminal.flush(Rect {
+    terminal.flush(vec![Rect {
         x: 1,
         y: 1,
         width,
         height,
-    })?;
+    }])?;
     terminal.set_cursor(cursor_x, cursor_y)?;
 
     for key in stdin.keys() {
         match key? {
             Key::Ctrl('q') => break,
             Key::Char('\n') => {
-                cmdbar.clear_cmd();
+                cmdbar.clear();
             }
             Key::Char(c) => {
                 cmdbar.push_char(c);
@@ -69,7 +69,7 @@ fn run4() -> Result<()> {
             _ => (),
         }
         terminal.render_widget(&mut cmdbar, area, true)?;
-        terminal.flush(area)?;
+        terminal.flush(vec![area])?;
         let (cursor_x, cursor_y) = cmdbar.cursor_pos(area, true);
         terminal.set_cursor(cursor_x, cursor_y)?;
     }
@@ -136,12 +136,12 @@ fn run3() -> Result<()> {
             }
         }
     }
-    terminal.flush(Rect {
+    terminal.flush(vec![Rect {
         x: 1,
         y: 1,
         width,
         height,
-    })?;
+    }])?;
 
     for key in stdin.keys() {
         match key? {
@@ -151,12 +151,12 @@ fn run3() -> Result<()> {
             _ => (),
         }
         // cmdbar.draw(&mut terminal, true)?;
-        terminal.flush(Rect {
+        terminal.flush(std::iter::once(Rect {
             x: 1,
             y: 1,
             width,
             height,
-        })?;
+        }))?;
     }
     Ok(())
 }
@@ -193,12 +193,12 @@ fn run2() -> Result<()> {
     write!(terminal, "{}", termion::cursor::Goto(cw, ch))?;
     // write!(terminal, "\r")?;
     // write!(terminal, "abcde\r\n")?;
-    terminal.flush(Rect {
+    terminal.flush(std::iter::once(Rect {
         x: 1,
         y: 1,
         width,
         height,
-    })?;
+    }))?;
 
     for key in stdin.keys() {
         match key? {
@@ -208,12 +208,12 @@ fn run2() -> Result<()> {
             _ => (),
         }
         // cmdbar.draw(&mut terminal, true)?;
-        terminal.flush(Rect {
+        terminal.flush(std::iter::once(Rect {
             x: 1,
             y: 1,
             width,
             height,
-        })?;
+        }))?;
     }
     Ok(())
 }
@@ -270,21 +270,21 @@ fn run1() -> Result<()> {
             }
             Key::Up => {
                 write!(terminal, "{}", termion::scroll::Up(1))?;
-                terminal.flush(Rect {
+                terminal.flush(std::iter::once(Rect {
                     x: 1,
                     y: 1,
                     width,
                     height,
-                })?;
+                }))?;
             }
             Key::Down => {
                 write!(terminal, "{}", termion::scroll::Down(1))?;
-                terminal.flush(Rect {
+                terminal.flush(std::iter::once(Rect {
                     x: 1,
                     y: 1,
                     width,
                     height,
-                })?;
+                }))?;
             }
             _ => (),
         }

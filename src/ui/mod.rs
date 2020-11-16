@@ -11,15 +11,14 @@ pub mod widget;
 pub mod width;
 // pub mod window;
 
-use crate::error::{Result, Error};
-use crate::ui::terminal::Terminal;
+use crate::error::{Error, Result};
 use crate::event::Event;
+use crate::ui::terminal::Terminal;
+use crossbeam_channel::Sender;
+use layout::Rect;
 use line::RawLine;
 use termion::event::{Key, MouseEvent};
-use crossbeam_channel::Receiver;
-use widget::{Flow, CmdBar, CmdOut, Border};
-use layout::Rect;
-use crossbeam_channel::{Sender, Receiver};
+use widget::{Block, CmdBar, CmdOut, Flow, Widget};
 
 pub trait UICallback {
     fn on_cmd(&mut self, cmd: String);
@@ -45,7 +44,6 @@ impl UICallback for EventBusCallback {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub enum UIEvent {
     Line(RawLine),
@@ -56,91 +54,72 @@ pub enum UIEvent {
     Mouse(MouseEvent),
 }
 
-
 pub struct Screen<C> {
     flow: Flow,
     flowarea: Rect,
-    // cmdborder: Border,
-    // cmdborderarea: Rect,
     cmdbar: CmdBar,
     cmdarea: Rect,
     terminal: Terminal,
-    uirx: Receiver<UIEvent>,
-    uicb: C
+    uicb: C,
 }
 
 impl Screen<EventBusCallback> {
-
-    pub fn init(evttx: Sender<Event>, uirx: Receiver<UIEvent>) -> Result<Self> {
-        let (width, height) = termion::terminal_size().unwrap();
-        // let mut window = Window::new(width as usize, height as usize, termconf);
-        let flowarea = Rect{x: 1, y: 1, width, height: height - 3};
-        let mut flow = Flow::new(flowarea, 2000, true);
-        let cmdborder = Border::Rounded;
-        let cmdborderarea = Rect{x: 1, y: 1, width, height: 3};
-        let cmdarea = widget::inner_area(cmdborderarea, true);
-        let mut cmdbar = CmdBar::new('.');
-        
+    pub fn init(evttx: Sender<Event>) -> Result<Self> {
+        let (width, height) = termion::terminal_size()?;
+        // 流占据主屏幕大半部分
+        let flowarea = Rect {
+            x: 1,
+            y: 1,
+            width,
+            height: height - 3,
+        };
+        let flow = Flow::new(flowarea, 2000, true);
+        // 命令行占据屏幕最下部3行
+        let cmdarea = Rect {
+            x: 1,
+            y: height - 2,
+            width,
+            height: 3,
+        };
+        let cmdbar = CmdBar::new('.', true);
         let mut uicb = EventBusCallback(evttx);
-        let mut terminal = match Terminal::init() {
+        let terminal = match Terminal::init() {
             Err(e) => {
                 eprintln!("error init raw terminal {}", e);
                 uicb.on_quit();
-                return Err(Error::RuntimeError("screen initialization failed".to_owned()));
+                return Err(Error::RuntimeError(
+                    "screen initialization failed".to_owned(),
+                ));
             }
             Ok(terminal) => {
                 eprintln!("raw terminal intiailized");
                 terminal
             }
         };
-        terminal.render_widget(&mut flow, flowarea, true).unwrap();
-        // terminal.flush(area)?;
-        terminal.render_widget(&mut cmdborder, cmdborderarea, true).unwrap();
-        // terminal.flush(area)?;
-        terminal.render_widget(&mut cmdbar, cmdarea, true).unwrap();
-        terminal.flush(vec![flowarea, cmdborderarea, cmdarea]).unwrap();
 
-        Ok(Self{
+        let mut screen = Self {
             flow,
             flowarea,
-            // cmdborder,
             cmdbar,
             cmdarea,
             terminal,
-            uirx,
             uicb,
-        })
+        };
+        screen.flush()?;
+        Ok(screen)
     }
 
-    fn event_loop(&mut self) {
-        loop {
-            match self.handle_event() {
-                Err(e) => {
-                    eprintln!("error render raw terminal {}", e);
-                    return;
-                }
-                Ok(true) => {
-                    eprintln!("exiting raw terminal");
-                    return;
-                }
-                _ => (),
-            }
-        }
-    }
-
-    fn handle_event(&mut self) -> Result<bool> {
-        match self.uirx.recv()? {
+    pub fn process_event(&mut self, event: UIEvent) -> Result<bool> {
+        match event {
             UIEvent::Key(key) => match key {
-                Key::Char('\n') => {
-                    match self.cmdbar.take() {
-                        CmdOut::Script(s) => {
-                            self.uicb.on_script(s);
-                        }
-                        CmdOut::Cmd(s) => {
-                            self.uicb.on_cmd(s);
-                        }
+                Key::Char('\n') => match self.cmdbar.take() {
+                    CmdOut::Script(s) => {
+                        self.uicb.on_script(s);
                     }
-                }
+                    CmdOut::Cmd(s) => {
+                        self.uicb.on_cmd(s);
+                    }
+                },
                 Key::Char(c) => {
                     self.cmdbar.push_char(c);
                 }
@@ -163,9 +142,30 @@ impl Screen<EventBusCallback> {
             }
             UIEvent::Tick | UIEvent::WindowResize => (),
         }
-        self.terminal.render_widget(&mut self.flow, self.flowarea, true)?;
-        self.terminal.render_widget(&mut self.cmdbar, self.cmdarea, true)?;
-        self.terminal.flush(vec![self.flowarea, self.cmdarea])?;
+        self.flush()?;
+        let (cursor_x, cursor_y) = self.cmdbar.cursor_pos(self.cmdarea, true);
+        // eprintln!("cursur ({}, {})", cursor_x, cursor_y);
+        // eprintln!("cmdarea={:?}", self.cmdarea);
+        self.terminal.set_cursor(cursor_x, cursor_y)?;
         Ok(false)
+    }
+
+    pub fn flush(&mut self) -> Result<()> {
+        self.terminal
+            .render_widget(&mut self.flow, self.flowarea)?;
+        self.terminal
+            .render_widget(&mut self.cmdbar, self.cmdarea)?;
+        self.terminal.flush(vec![self.flowarea, self.cmdarea])?;
+        Ok(())
+    }
+
+    /// 代理Widget更新
+    pub fn render_widget<W: Widget>(
+        &mut self,
+        widget: &mut W,
+        area: Rect,
+        cjk: bool,
+    ) -> Result<()> {
+        self.terminal.render_widget(widget, area)
     }
 }

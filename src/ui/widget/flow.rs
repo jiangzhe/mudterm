@@ -1,11 +1,11 @@
-use crate::ui::ansi::AnsiParser;
-use crate::ui::line::{Line, RawLine, WrapLine};
-use crate::ui::layout::Rect;
-use crate::ui::widget::Widget;
-use crate::ui::buffer::Buffer;
 use crate::error::Result;
-use std::collections::VecDeque;
+use crate::ui::ansi::AnsiParser;
+use crate::ui::buffer::Buffer;
+use crate::ui::layout::Rect;
+use crate::ui::line::{Line, RawLine, WrapLine};
+use crate::ui::widget::Widget;
 use std::collections::vec_deque::Iter;
+use std::collections::VecDeque;
 
 pub struct Flow {
     area: Rect,
@@ -13,8 +13,6 @@ pub struct Flow {
     raw: VecDeque<RawLine>,
     display: VecDeque<WrapLine>,
     parser: AnsiParser,
-    // ready: usize,
-    // partial_ready: bool,
     cjk: bool,
 }
 
@@ -39,7 +37,14 @@ impl Flow {
 
     pub fn push_line(&mut self, line: RawLine) {
         // 解析序列
-        self.parse_ansi_line(line.content());
+        parse_ansi_line(
+            &mut self.parser,
+            &mut self.display,
+            line.content(),
+            self.area.width as usize,
+            self.cjk,
+            self.area.height as usize,
+        );
         // 原ansi字符序列
         if let Some(last_line) = self.raw.back_mut() {
             if !last_line.ended() {
@@ -55,23 +60,6 @@ impl Flow {
         }
     }
 
-    fn parse_ansi_line(&mut self, line: impl AsRef<str>) {
-        self.parser.fill(line.as_ref());
-        while let Some(span) = self.parser.next_span() {
-            let last_line = self.display.back_mut().unwrap();
-            if !last_line.ended() {
-                last_line.push_span(span, self.area.width as usize, self.cjk);
-            } else {
-                let line = Line::single(span);
-                let wl = line.wrap(self.area.width as usize, self.cjk);
-                self.display.push_back(wl);
-            }
-        }
-        while self.display.len() > self.max_lines {
-            self.display.pop_front();
-        }
-    }
-
     pub fn push_lines(&mut self, lines: impl IntoIterator<Item = RawLine>) {
         for line in lines {
             self.push_line(line);
@@ -83,7 +71,14 @@ impl Flow {
         self.parser = AnsiParser::new();
         self.display.clear();
         for line in self.raw.iter().rev().take(self.area.height as usize).rev() {
-            self.parse_ansi_line(line);
+            parse_ansi_line(
+                &mut self.parser,
+                &mut self.display,
+                line,
+                self.area.width as usize,
+                self.cjk,
+                self.area.height as usize,
+            );
         }
     }
 
@@ -96,20 +91,51 @@ impl Flow {
     }
 }
 
-pub struct FlowLines<'a> {
-    lines: Iter<'a, WrapLine>,
+/// 克服Rust borrowchecker的结构化限制
+fn parse_ansi_line(
+    parser: &mut AnsiParser,
+    display: &mut VecDeque<WrapLine>,
+    line: impl AsRef<str>,
+    width: usize,
+    cjk: bool,
+    height: usize,
+) {
+    parser.fill(line.as_ref());
+    while let Some(span) = parser.next_span() {
+        if let Some(last_line) = display.back_mut() {
+            if !last_line.ended() {
+                last_line.push_span(span, width, cjk);
+            } else {
+                let line = Line::single(span);
+                let wl = line.wrap(width, cjk);
+                display.push_back(wl);
+            }
+        } else {
+            let line = Line::single(span);
+            let wl = line.wrap(width, cjk);
+            display.push_back(wl);
+        }
+    }
+    while display.len() > height {
+        display.pop_front();
+    }
 }
 
-impl<'a> Widget for FlowLines<'a> {
-
-    fn refresh_buffer<B: Buffer>(&mut self, buf: &mut B, cjk: bool) -> Result<()> {
+impl Widget for Flow {
+    fn refresh_buffer<B: Buffer>(&mut self, buf: &mut B) -> Result<()> {
         let mut y = buf.area().top();
-        while let Some(wl) = self.lines.next() {
+        // eprintln!("flow area {:?}", buf.area());
+        // eprintln!("display wl size {}", self.display.len());
+        // eprintln!(
+        //     "display line size {}",
+        //     self.display.iter().map(|wl| wl.0.len()).sum::<usize>()
+        // );
+        for wl in &self.display {
             for l in &wl.0 {
                 let mut x = buf.area().left();
-                for span in l.spans {
+                for span in &l.spans {
                     if let Some(pos) =
-                        buf.set_line_str(x, y, &span.content, buf.area().right(), span.style, cjk)
+                        buf.set_line_str(x, y, &span.content, buf.area().right(), span.style, self.cjk)
                     {
                         x = pos;
                     }
@@ -117,7 +143,6 @@ impl<'a> Widget for FlowLines<'a> {
                 y += 1;
             }
         }
-
         Ok(())
     }
 }

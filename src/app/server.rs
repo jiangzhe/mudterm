@@ -22,7 +22,7 @@ pub fn start_from_mud_handle(evttx: Sender<Event>, from_mud: impl io::Read + Sen
                 }
                 Ok(TelnetEvent::Disconnected) => {
                     // once disconnected, stop the thread
-                    evttx.send(Event::WorldDisconnected).unwrap();
+                    let _ = evttx.send(Event::WorldDisconnected);
                     break;
                 }
                 Ok(TelnetEvent::Empty) => (),
@@ -44,8 +44,8 @@ pub fn start_to_mud_handle(
         loop {
             match rx.recv() {
                 Err(e) => {
-                    eprintln!("{}", e);
-                    evttx.send(Event::WorldDisconnected).unwrap();
+                    eprintln!("error channel receive outbound message {}", e);
+                    let _ = evttx.send(Event::WorldDisconnected);
                     return;
                 }
                 Ok(bs) => {
@@ -81,7 +81,7 @@ fn start_to_client_handle(conn: TcpStream, pass: String, evttx: Sender<Event>) -
         // do authentication first
         let mut conn = match auth::server_auth(conn, &pass) {
             Err(_) => {
-                evttx.send(Event::ClientAuthFail).unwrap();
+                let _ = evttx.send(Event::ClientAuthFail);
                 return;
             }
             Ok(conn) => conn,
@@ -101,7 +101,7 @@ fn start_to_client_handle(conn: TcpStream, pass: String, evttx: Sender<Event>) -
                 Ok(sm) => {
                     let pkt: Packet = sm.into();
                     if pkt.write_to(&mut conn).is_err() {
-                        evttx.send(Event::ClientDisconnect).unwrap();
+                        let _ = evttx.send(Event::ClientDisconnect);
                         break;
                     }
                 }
@@ -117,7 +117,7 @@ fn start_from_client_handle(mut conn: TcpStream, evttx: Sender<Event>) {
     thread::spawn(move || loop {
         match Packet::read_from(&mut conn) {
             Err(_) => {
-                evttx.send(Event::ClientDisconnect).unwrap();
+                let _ = evttx.send(Event::ClientDisconnect);
                 break;
             }
             Ok(Packet::Text(s)) => {

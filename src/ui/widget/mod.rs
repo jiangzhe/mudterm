@@ -1,15 +1,14 @@
-pub mod border;
+pub mod block;
 pub mod cmdbar;
 pub mod flow;
 
 use crate::error::Result;
 use crate::ui::buffer::Buffer;
 
-pub use flow::*;
+pub use block::*;
 pub use cmdbar::*;
-pub use border::*;
-
+pub use flow::*;
 
 pub trait Widget {
-    fn refresh_buffer<B: Buffer>(&mut self, buf: &mut B, cjk: bool) -> Result<()>;
+    fn refresh_buffer<B: Buffer>(&mut self, buf: &mut B) -> Result<()>;
 }

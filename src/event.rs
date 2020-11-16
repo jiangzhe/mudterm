@@ -1,7 +1,7 @@
 use crate::codec::Codec;
 use crate::error::Result;
 use crate::runtime::Runtime;
-use crate::ui::line::{Line, RawLine, RawLines};
+use crate::ui::line::{RawLine, RawLines};
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::VecDeque;
 use std::net::{SocketAddr, TcpStream};

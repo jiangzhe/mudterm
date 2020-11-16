@@ -5,10 +5,7 @@ use crate::protocol::Packet;
 use crate::runtime::Runtime;
 use crate::signal;
 use crate::ui::line::RawLine;
-use crate::ui::terminal::Terminal;
-use crate::ui::{render, UICallback, UIEvent};
-use crate::ui::widget::{Flow, CmdBar, Border, inner_area};
-use crate::ui::layout::Rect;
+use crate::ui::{Screen, UIEvent};
 use crate::userinput;
 use crossbeam_channel::{unbounded, Sender};
 use std::{io, thread};
@@ -37,150 +34,41 @@ pub fn start_ui_handle(
     evttx: Sender<Event>,
 ) -> Result<(Sender<UIEvent>, thread::JoinHandle<()>)> {
     let (uitx, uirx) = unbounded::<UIEvent>();
-
     let handle = thread::spawn(move || {
-        // let mut screen = RawScreen::new(termconf);
-        let (width, height) = termion::terminal_size().unwrap();
-        // let mut window = Window::new(width as usize, height as usize, termconf);
-        let flowarea = Rect{x: 1, y: 1, width, height: height - 3};
-        let mut flow = Flow::new(flowarea, 2000, true);
-        let cmdborder = Border::Rounded;
-        let cmdborderarea = Rect{x: 1, y: 1, width, height: 3};
-        let cmdarea = inner_area(cmdborderarea, true);
-        let mut cmdbar = CmdBar::new('.');
-        
-        let mut cb = EventBusCallback(evttx);
-        let mut terminal = match Terminal::init() {
+        let mut screen = match Screen::init(evttx.clone()) {
+            Ok(screen) => screen,
             Err(e) => {
-                eprintln!("error init raw terminal {}", e);
-                cb.on_quit();
+                eprintln!("failed to initialize screen {}", e);
+                let _ = evttx.send(Event::Quit);
                 return;
-            }
-            Ok(terminal) => {
-                eprintln!("raw terminal intiailized");
-                terminal
             }
         };
 
-        terminal.render_widget(&mut flow, flowarea, true).unwrap();
-        // terminal.flush(area)?;
-        terminal.render_widget(&mut cmdborder, cmdborderarea, true).unwrap();
-        // terminal.flush(area)?;
-        terminal.render_widget(&mut cmdbar, cmdarea, true).unwrap();
-        terminal.flush(vec![flowarea, cmdborderarea, cmdarea]).unwrap();
-
         loop {
-            match render(&mut flow, &mut cmdbar, &mut terminal, &uirx, &mut cb) {
+            match uirx.recv() {
                 Err(e) => {
-                    eprintln!("error render raw terminal {}", e);
-                    return;
+                    eprintln!("error channel receive ui event {}", e);
+                    let _ = evttx.send(Event::Quit);
+                    break;
                 }
-                Ok(true) => {
-                    eprintln!("exiting raw terminal");
-                    return;
+                Ok(evt) => {
+                    let to_quit = match screen.process_event(evt) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            eprintln!("failed to process event {}", e);
+                            let _ = evttx.send(Event::Quit);
+                            break;
+                        }
+                    };
+                    if to_quit {
+                        break;
+                    }
                 }
-                _ => (),
             }
         }
     });
     Ok((uitx, handle))
 }
-
-
-
-pub fn render<C: UICallback>(
-    flow: &mut Flow,
-    cmdbar: &mut CmdBar,
-    terminal: &mut Terminal,
-    uirx: &Receiver<UIEvent>,
-    cb: &mut C,
-) -> Result<bool> {
-    match uirx.recv()? {
-        UIEvent::Key(key) => match key {
-            Key::Char('\n') => {
-                match cmdbar.take() {
-                    CmdOut::Script(s) => {
-                        cb.on_script(s);
-                    }
-                    CmdOut::Cmd(s) => {
-                        cb.on_cmd(s);
-                    }
-                }
-            }
-            Key::Char(c) => {
-                cmdbar.push_char(c);
-            }
-            Key::Backspace => {
-                cmdbar.pop_char();
-            }
-            Key::Ctrl('q') => {
-                cb.on_quit();
-                return Ok(true);
-            }
-            k => {
-                eprintln!("unhandled key {:?}", k);
-            }
-        },
-        UIEvent::Lines(lines) => flow.push_lines(lines),
-        UIEvent::Line(line) => flow.push_line(line),
-        UIEvent::Mouse(_) => {
-            // not to render the screen
-            return Ok(false);
-        }
-        UIEvent::Tick | UIEvent::WindowResize => (),
-    }
-    terminal.render_widget(&mut flow, flowarea, true)?;
-    terminal.render_widget(&mut , area, cjk)
-    terminal.flush()?;
-    Ok(false)
-}
-
-pub fn draw(evttx: Receiver<Event>) {
-    // let mut screen = RawScreen::new(termconf);
-    let (width, height) = termion::terminal_size().unwrap();
-    // let mut window = Window::new(width as usize, height as usize, termconf);
-    let flowarea = Rect{x: 1, y: 1, width, height: height - 3};
-    let mut flow = Flow::new(flowarea, 2000, true);
-    let cmdborder = Border::Rounded;
-    let cmdborderarea = Rect{x: 1, y: 1, width, height: 3};
-    let cmdarea = inner_area(cmdborderarea, true);
-    let mut cmdbar = CmdBar::new('.');
-    
-    let mut cb = EventBusCallback(evttx);
-    let mut terminal = match Terminal::init() {
-        Err(e) => {
-            eprintln!("error init raw terminal {}", e);
-            cb.on_quit();
-            return;
-        }
-        Ok(terminal) => {
-            eprintln!("raw terminal intiailized");
-            terminal
-        }
-    };
-
-    terminal.render_widget(&mut flow, flowarea, true).unwrap();
-    // terminal.flush(area)?;
-    terminal.render_widget(&mut cmdborder, cmdborderarea, true).unwrap();
-    // terminal.flush(area)?;
-    terminal.render_widget(&mut cmdbar, cmdarea, true).unwrap();
-    terminal.flush(vec![flowarea, cmdborderarea, cmdarea]).unwrap();
-
-    loop {
-        match render(&mut flow, &mut cmdbar, &mut terminal, &uirx, &mut cb) {
-            Err(e) => {
-                eprintln!("error render raw terminal {}", e);
-                return;
-            }
-            Ok(true) => {
-                eprintln!("exiting raw terminal");
-                return;
-            }
-            _ => (),
-        }
-    }
-}
-
 
 pub fn start_to_server_handle(mut to_server: impl io::Write + Send + 'static) -> Sender<Packet> {
     let (tx, rx) = unbounded::<Packet>();
