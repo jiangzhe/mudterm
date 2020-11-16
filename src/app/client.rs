@@ -6,7 +6,9 @@ use crate::runtime::Runtime;
 use crate::signal;
 use crate::ui::line::RawLine;
 use crate::ui::terminal::Terminal;
-use crate::ui::window::{Window, WindowCallback, WindowEvent};
+use crate::ui::{render, UICallback, UIEvent};
+use crate::ui::widget::{Flow, CmdBar, Border, inner_area};
+use crate::ui::layout::Rect;
 use crate::userinput;
 use crossbeam_channel::{unbounded, Sender};
 use std::{io, thread};
@@ -33,18 +35,25 @@ pub fn start_signal_handle(evttx: Sender<Event>) -> thread::JoinHandle<()> {
 pub fn start_ui_handle(
     termconf: conf::Term,
     evttx: Sender<Event>,
-) -> Result<(Sender<WindowEvent>, thread::JoinHandle<()>)> {
-    let (uitx, uirx) = unbounded::<WindowEvent>();
+) -> Result<(Sender<UIEvent>, thread::JoinHandle<()>)> {
+    let (uitx, uirx) = unbounded::<UIEvent>();
 
     let handle = thread::spawn(move || {
         // let mut screen = RawScreen::new(termconf);
         let (width, height) = termion::terminal_size().unwrap();
-        let mut window = Window::new(width as usize, height as usize, termconf);
+        // let mut window = Window::new(width as usize, height as usize, termconf);
+        let flowarea = Rect{x: 1, y: 1, width, height: height - 3};
+        let mut flow = Flow::new(flowarea, 2000, true);
+        let cmdborder = Border::Rounded;
+        let cmdborderarea = Rect{x: 1, y: 1, width, height: 3};
+        let cmdarea = inner_area(cmdborderarea, true);
+        let mut cmdbar = CmdBar::new('.');
+        
         let mut cb = EventBusCallback(evttx);
         let mut terminal = match Terminal::init() {
             Err(e) => {
                 eprintln!("error init raw terminal {}", e);
-                cb.on_quit(&mut window);
+                cb.on_quit();
                 return;
             }
             Ok(terminal) => {
@@ -53,8 +62,15 @@ pub fn start_ui_handle(
             }
         };
 
+        terminal.render_widget(&mut flow, flowarea, true).unwrap();
+        // terminal.flush(area)?;
+        terminal.render_widget(&mut cmdborder, cmdborderarea, true).unwrap();
+        // terminal.flush(area)?;
+        terminal.render_widget(&mut cmdbar, cmdarea, true).unwrap();
+        terminal.flush(vec![flowarea, cmdborderarea, cmdarea]).unwrap();
+
         loop {
-            match window.render(&mut terminal, &uirx, &mut cb) {
+            match render(&mut flow, &mut cmdbar, &mut terminal, &uirx, &mut cb) {
                 Err(e) => {
                     eprintln!("error render raw terminal {}", e);
                     return;
@@ -70,21 +86,101 @@ pub fn start_ui_handle(
     Ok((uitx, handle))
 }
 
-pub struct EventBusCallback(Sender<Event>);
 
-impl WindowCallback for EventBusCallback {
-    fn on_cmd(&mut self, _screen: &mut Window, cmd: String) {
-        self.0.send(Event::UserInputLine(cmd)).unwrap()
+
+pub fn render<C: UICallback>(
+    flow: &mut Flow,
+    cmdbar: &mut CmdBar,
+    terminal: &mut Terminal,
+    uirx: &Receiver<UIEvent>,
+    cb: &mut C,
+) -> Result<bool> {
+    match uirx.recv()? {
+        UIEvent::Key(key) => match key {
+            Key::Char('\n') => {
+                match cmdbar.take() {
+                    CmdOut::Script(s) => {
+                        cb.on_script(s);
+                    }
+                    CmdOut::Cmd(s) => {
+                        cb.on_cmd(s);
+                    }
+                }
+            }
+            Key::Char(c) => {
+                cmdbar.push_char(c);
+            }
+            Key::Backspace => {
+                cmdbar.pop_char();
+            }
+            Key::Ctrl('q') => {
+                cb.on_quit();
+                return Ok(true);
+            }
+            k => {
+                eprintln!("unhandled key {:?}", k);
+            }
+        },
+        UIEvent::Lines(lines) => flow.push_lines(lines),
+        UIEvent::Line(line) => flow.push_line(line),
+        UIEvent::Mouse(_) => {
+            // not to render the screen
+            return Ok(false);
+        }
+        UIEvent::Tick | UIEvent::WindowResize => (),
     }
+    terminal.render_widget(&mut flow, flowarea, true)?;
+    terminal.render_widget(&mut , area, cjk)
+    terminal.flush()?;
+    Ok(false)
+}
 
-    fn on_script(&mut self, _screen: &mut Window, script: String) {
-        self.0.send(Event::UserScriptLine(script)).unwrap();
-    }
+pub fn draw(evttx: Receiver<Event>) {
+    // let mut screen = RawScreen::new(termconf);
+    let (width, height) = termion::terminal_size().unwrap();
+    // let mut window = Window::new(width as usize, height as usize, termconf);
+    let flowarea = Rect{x: 1, y: 1, width, height: height - 3};
+    let mut flow = Flow::new(flowarea, 2000, true);
+    let cmdborder = Border::Rounded;
+    let cmdborderarea = Rect{x: 1, y: 1, width, height: 3};
+    let cmdarea = inner_area(cmdborderarea, true);
+    let mut cmdbar = CmdBar::new('.');
+    
+    let mut cb = EventBusCallback(evttx);
+    let mut terminal = match Terminal::init() {
+        Err(e) => {
+            eprintln!("error init raw terminal {}", e);
+            cb.on_quit();
+            return;
+        }
+        Ok(terminal) => {
+            eprintln!("raw terminal intiailized");
+            terminal
+        }
+    };
 
-    fn on_quit(&mut self, _screen: &mut Window) {
-        self.0.send(Event::Quit).unwrap();
+    terminal.render_widget(&mut flow, flowarea, true).unwrap();
+    // terminal.flush(area)?;
+    terminal.render_widget(&mut cmdborder, cmdborderarea, true).unwrap();
+    // terminal.flush(area)?;
+    terminal.render_widget(&mut cmdbar, cmdarea, true).unwrap();
+    terminal.flush(vec![flowarea, cmdborderarea, cmdarea]).unwrap();
+
+    loop {
+        match render(&mut flow, &mut cmdbar, &mut terminal, &uirx, &mut cb) {
+            Err(e) => {
+                eprintln!("error render raw terminal {}", e);
+                return;
+            }
+            Ok(true) => {
+                eprintln!("exiting raw terminal");
+                return;
+            }
+            _ => (),
+        }
     }
 }
+
 
 pub fn start_to_server_handle(mut to_server: impl io::Write + Send + 'static) -> Sender<Packet> {
     let (tx, rx) = unbounded::<Packet>();
@@ -125,12 +221,12 @@ pub fn start_from_server_handle(
 }
 
 pub struct Client {
-    uitx: Sender<WindowEvent>,
+    uitx: Sender<UIEvent>,
     srvtx: Sender<Packet>,
 }
 
 impl Client {
-    pub fn new(uitx: Sender<WindowEvent>, srvtx: Sender<Packet>) -> Self {
+    pub fn new(uitx: Sender<UIEvent>, srvtx: Sender<Packet>) -> Self {
         Self { uitx, srvtx }
     }
 }
@@ -142,16 +238,16 @@ impl EventHandler for Client {
             // 以下事件发送给UI线程处理
             Event::Tick => {
                 // todo: implements trigger by tick
-                self.uitx.send(WindowEvent::Tick)?;
+                self.uitx.send(UIEvent::Tick)?;
             }
             Event::TerminalKey(k) => {
-                self.uitx.send(WindowEvent::Key(k))?;
+                self.uitx.send(UIEvent::Key(k))?;
             }
             Event::TerminalMouse(m) => {
-                self.uitx.send(WindowEvent::Mouse(m))?;
+                self.uitx.send(UIEvent::Mouse(m))?;
             }
             Event::WindowResize => {
-                self.uitx.send(WindowEvent::WindowResize)?;
+                self.uitx.send(UIEvent::WindowResize)?;
             }
             // 以下事件交给运行时处理
             Event::LinesFromServer(lines) => {
@@ -196,7 +292,7 @@ impl RuntimeEventHandler for Client {
                 self.srvtx.send(Packet::Text(s))?;
             }
             RuntimeEvent::DisplayLines(lines) => {
-                self.uitx.send(WindowEvent::Lines(lines.into_vec()))?;
+                self.uitx.send(UIEvent::Lines(lines.into_vec()))?;
             }
         }
         Ok(NextStep::Run)

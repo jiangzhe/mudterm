@@ -58,10 +58,13 @@ impl Terminal {
         &mut self.curr_buf
     }
 
-    pub fn flush(&mut self, area: Rect) -> Result<()> {
-        let prev_buf = &self.prev_buf.subset(area)?;
-        let curr_buf = &self.curr_buf.subset(area)?;
-        let updates = prev_buf.diff(curr_buf);
+    pub fn flush(&mut self, areas: impl IntoIterator<Item=Rect>) -> Result<()> {
+        let mut updates = vec![];
+        for area in areas {
+            let prev_buf = &self.prev_buf.subset(area)?;
+            let curr_buf = &self.curr_buf.subset(area)?;
+            prev_buf.diff(curr_buf, &mut updates);
+        }
         // eprintln!("updates={:#?}", updates);
         draw_updates(&mut self.out, updates)?;
         self.out.flush()?;

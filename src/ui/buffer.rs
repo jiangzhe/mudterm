@@ -185,7 +185,7 @@ pub trait Buffer {
     }
 
     /// 比较两份缓存，并返回需要更新的单元列表
-    fn diff<'a, B>(&self, other: &'a B) -> Vec<(u16, u16, &'a Cell)>
+    fn diff<'a, B>(&self, other: &'a B, updates: &mut Vec<(u16, u16, &'a Cell)>)
     where
         B: Buffer,
     {
@@ -196,7 +196,7 @@ pub trait Buffer {
             self.area(),
             other.area()
         );
-        let mut updates: Vec<(u16, u16, &Cell)> = vec![];
+        // let mut out: Vec<(u16, u16, &Cell)> = vec![];
         let mut invalidated: u16 = 0;
         let mut to_skip: u16 = 0;
 
@@ -212,7 +212,6 @@ pub trait Buffer {
                 invalidated = std::cmp::max(affacted_width, invalidated).saturating_sub(1);
             }
         }
-        updates
     }
 
     fn set_style(&mut self, area: Rect, style: Style) {
@@ -403,7 +402,8 @@ mod tests {
         let mut buf2 = BufferVec::empty(Rect::new(1, 1, 5, 1));
         buf2.set_line_str(1, 1, "h中", 6, Style::default(), true);
 
-        let updates = buf1.diff(&buf2);
+        let updates = vec![];
+        buf1.diff(&buf2, &mut updates);
         println!("updates={:#?}", updates);
     }
 

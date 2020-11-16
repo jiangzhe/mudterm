@@ -3,10 +3,12 @@ use crate::error::Result;
 use crate::ui::ansi::AnsiParser;
 use crate::ui::line::{Line, RawLine, WrapLine};
 use crate::ui::widget::Widget;
+
 use crossbeam_channel::Receiver;
 use std::collections::VecDeque;
 use std::io::Write;
 use termion::event::{Key, MouseButton, MouseEvent};
+
 
 pub struct Window {
     cmd: String,
@@ -37,6 +39,7 @@ pub struct Window {
 //         Ok(())
 //     }
 // }
+
 
 impl Window {
     pub fn new(width: usize, height: usize, termconf: conf::Term) -> Self {
@@ -196,111 +199,4 @@ pub enum WindowEvent {
     Tick,
     WindowResize,
     Mouse(MouseEvent),
-}
-
-pub struct Flow {
-    width: usize,
-    height: usize,
-    max_lines: usize,
-    raw: VecDeque<RawLine>,
-    display: VecDeque<WrapLine>,
-    parser: AnsiParser,
-    ready: usize,
-    partial_ready: bool,
-}
-
-impl Flow {
-    pub fn new(width: usize, height: usize, max_lines: usize) -> Self {
-        debug_assert!(max_lines >= height);
-        let mut raw = VecDeque::new();
-        let mut parsed = VecDeque::new();
-        let empty_raw = RawLine::owned(String::from("\r\n"));
-        let empty_parsed = WrapLine(vec![Line::fmt_raw("")]);
-        for _ in 0..height {
-            raw.push_back(empty_raw.clone());
-            parsed.push_back(empty_parsed.clone());
-        }
-        Self {
-            width,
-            height,
-            max_lines,
-            raw,
-            display: parsed,
-            parser: AnsiParser::new(),
-            ready: height,
-            partial_ready: false,
-        }
-    }
-
-    pub fn push_line(&mut self, line: RawLine) {
-        // 解析序列
-        self.parse_ansi_line(line.content());
-
-        // 原ansi字符序列
-        if let Some(last_line) = self.raw.back_mut() {
-            if !last_line.ended() {
-                last_line.push_line(line);
-                self.partial_ready = true;
-                return;
-            }
-        }
-        self.raw.push_back(line);
-        self.ready += 1;
-        while self.raw.len() > self.max_lines {
-            self.raw.pop_front();
-        }
-    }
-
-    fn parse_ansi_line(&mut self, line: impl AsRef<str>) {
-        self.parser.fill(line.as_ref());
-        while let Some(span) = self.parser.next_span() {
-            let last_line = self.display.back_mut().unwrap();
-            if !last_line.ended() {
-                last_line.push_span(span, self.width, true);
-            } else {
-                let line = Line::single(span);
-                let wl = line.wrap(self.width, true);
-                self.display.push_back(wl);
-            }
-        }
-        while self.display.len() > self.max_lines {
-            self.display.pop_front();
-        }
-    }
-
-    pub fn push_lines(&mut self, lines: impl IntoIterator<Item = RawLine>) {
-        for line in lines {
-            self.push_line(line);
-        }
-    }
-
-    pub fn next_lines(&mut self) -> (Vec<RawLine>, bool) {
-        let partial_ready = self.partial_ready;
-        let mut ready = self.ready;
-        if partial_ready {
-            ready += 1;
-        }
-        let lines = self.raw.iter().rev().take(ready).cloned().rev().collect();
-        self.partial_ready = false;
-        self.ready = 0;
-        (lines, partial_ready)
-    }
-
-    pub fn replay_lines(&mut self) -> Vec<RawLine> {
-        let lines = self
-            .raw
-            .iter()
-            .rev()
-            .take(self.height)
-            .cloned()
-            .rev()
-            .collect();
-        self.partial_ready = false;
-        self.ready = 0;
-        lines
-    }
-
-    pub fn line_by_offset(&self, offset: usize) -> Option<RawLine> {
-        self.raw.iter().rev().nth(offset).cloned()
-    }
 }

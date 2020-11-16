@@ -2,19 +2,19 @@ use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, RuntimeEventHandler};
 use crate::runtime::Runtime;
 use crate::ui::line::RawLine;
-use crate::ui::window::WindowEvent;
+use crate::ui::UIEvent;
 use crossbeam_channel::Sender;
 use std::thread;
 
 /// standalone app, directly connect to mud world
 /// and render UI
 pub struct Standalone {
-    uitx: Sender<WindowEvent>,
+    uitx: Sender<UIEvent>,
     worldtx: Sender<Vec<u8>>,
 }
 
 impl Standalone {
-    pub fn new(uitx: Sender<WindowEvent>, worldtx: Sender<Vec<u8>>) -> Self {
+    pub fn new(uitx: Sender<UIEvent>, worldtx: Sender<Vec<u8>>) -> Self {
         Self { uitx, worldtx }
     }
 }
@@ -30,16 +30,16 @@ impl EventHandler for Standalone {
             // 以下事件发送给UI线程处理
             Event::Tick => {
                 // todo: implements trigger by tick
-                self.uitx.send(WindowEvent::Tick)?;
+                self.uitx.send(UIEvent::Tick)?;
             }
             Event::TerminalKey(k) => {
-                self.uitx.send(WindowEvent::Key(k))?;
+                self.uitx.send(UIEvent::Key(k))?;
             }
             Event::TerminalMouse(m) => {
-                self.uitx.send(WindowEvent::Mouse(m))?;
+                self.uitx.send(UIEvent::Mouse(m))?;
             }
             Event::WindowResize => {
-                self.uitx.send(WindowEvent::WindowResize)?;
+                self.uitx.send(UIEvent::WindowResize)?;
             }
             // 以下事件交给运行时处理
             Event::WorldBytes(bs) => {
@@ -86,7 +86,7 @@ impl RuntimeEventHandler for Standalone {
                 self.worldtx.send(bs)?;
             }
             RuntimeEvent::DisplayLines(lines) => {
-                self.uitx.send(WindowEvent::Lines(lines.into_vec()))?;
+                self.uitx.send(UIEvent::Lines(lines.into_vec()))?;
             }
         }
         Ok(NextStep::Run)
