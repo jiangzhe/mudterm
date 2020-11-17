@@ -7,8 +7,7 @@ use mudterm::ui::line::{Line, RawLine, RawLines};
 use mudterm::ui::style::{Color, Style};
 use mudterm::ui::terminal::Terminal;
 use mudterm::ui::widget::cmdbar::CmdBar;
-use mudterm::ui::widget::Block;
-use mudterm::ui::widget::Widget;
+use mudterm::ui::widget::{Block, Flow, Widget};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{stdin, Read, Write};
@@ -16,16 +15,161 @@ use termion::cursor::DetectCursorPos;
 use termion::event::{Event, Key, MouseButton, MouseEvent};
 use termion::input::{MouseTerminal, TermRead};
 use termion::terminal_size;
+use termion::screen::AlternateScreen;
+use termion::raw::IntoRawMode;
+use mudterm::ui::symbol::HORIZONTAL;
 
 fn main() -> Result<()> {
     // run1()
     // run2()
     // run3()
-    run4()
+    // run4()
+    // run5()
+    // run6()
+    run7()
 }
 
 fn write_style<W: Write>(writer: &mut W, style: Style) -> Result<()> {
     write!(writer, "{}", style)?;
+    Ok(())
+}
+
+fn run7() -> Result<()> {
+    let debuglog = File::create("window_debug.log")?;
+    let _stderr_redirect = Redirect::stderr(debuglog)
+        .map_err(|e| Error::RuntimeError(format!("Redirect stderr error {}", e)))?;
+    let stdin = stdin();
+    let out = std::io::stdout().into_raw_mode()?;
+    let out = MouseTerminal::from(out);
+    let mut out = AlternateScreen::from(out);
+    out.flush()?;
+    let line = {
+        let mut line = String::new();
+        for _ in 0..8 {
+            line.push(HORIZONTAL);
+        }
+        line
+    };
+    let mut keys = stdin.keys();
+    keys.next().unwrap();
+    write!(out, "{}", termion::cursor::Goto(1,1))?;
+    write!(out, "{}", line)?;
+    out.flush()?;
+    keys.next().unwrap();
+    write!(out, "{}", termion::cursor::Goto(1,1))?;
+    write!(out, "{}", "a你我他谁是谁\r\n")?;
+    write!(out, "{}", "千里之行，始于足下\r\n")?;
+    out.flush()?;
+    keys.next().unwrap();
+
+    write!(out, "\x1b[b;1,1,3,10$x")?;
+    out.flush()?;
+    keys.next().unwrap();
+    write!(out,"{}", termion::cursor::Goto(1,1))?;
+    write!(out,"{}", HORIZONTAL)?;
+    // write!(out,"{}", HORIZONTAL)?;
+    // write!(out,"{}", termion::cursor::Goto(2,1))?;
+    // write!(out,"{}", HORIZONTAL)?;
+    // out.flush()?;
+    // keys.next().unwrap();
+    write!(out,"{}", termion::cursor::Goto(3,1))?;
+    write!(out,"{}", HORIZONTAL)?;
+    // write!(out,"{}", termion::cursor::Goto(4,1))?;
+    // write!(out,"{} ", HORIZONTAL)?;
+    // out.flush()?;
+    // keys.next().unwrap();
+    write!(out,"{}", termion::cursor::Goto(5,1))?;
+    write!(out,"{}", HORIZONTAL)?;
+    // write!(out,"{}", termion::cursor::Goto(6,1))?;
+    // write!(out,"{} ", HORIZONTAL)?;
+    // out.flush()?;
+    // keys.next().unwrap();
+    write!(out,"{}", termion::cursor::Goto(7,1))?;
+    write!(out,"{}", HORIZONTAL)?;
+    // write!(out,"{}", termion::cursor::Goto(8,1))?;
+    // write!(out,"{} ", HORIZONTAL)?;
+    out.flush()?;
+    keys.next().unwrap();
+
+    Ok(())
+}
+
+// 测试上移
+fn run6() -> Result<()> {
+    let debuglog = File::create("window_debug.log")?;
+    let _stderr_redirect = Redirect::stderr(debuglog)
+        .map_err(|e| Error::RuntimeError(format!("Redirect stderr error {}", e)))?;
+    let stdin = stdin();
+    let mut terminal = Terminal::init()?;
+    let (width, height) = termion::terminal_size()?;
+    let flowarea = Rect{
+        x: 1, y: 1, width, height: 4,
+    };
+    let mut flow = Flow::new(flowarea, 5000, true);
+    flow.push_line(RawLine::owned("静言\r\n"));
+    flow.push_line(RawLine::owned("┌───基本知识\r\n"));
+    flow.push_line(RawLine::owned("│ 读书\r\n"));
+    flow.push_line(RawLine::owned("│ 叫化\r\n"));
+    terminal.render_widget(&mut flow, flowarea)?;
+    terminal.flush(vec![flowarea])?;
+    let mut keys = stdin.keys();
+    keys.next().unwrap();
+    
+    flow.push_line(RawLine::owned("│ 道听\r\n"));
+    terminal.render_widget(&mut flow, flowarea)?;
+    terminal.flush(vec![flowarea])?;
+    keys.next().unwrap();
+    Ok(())
+}
+
+fn run5() -> Result<()> {
+    let debuglog = File::create("window_debug.log")?;
+    let _stderr_redirect = Redirect::stderr(debuglog)
+        .map_err(|e| Error::RuntimeError(format!("Redirect stderr error {}", e)))?;
+
+    let s = {
+        let mut f = File::open("server.log")?;
+        let mut s = String::new();
+        f.read_to_string(&mut s)?;
+        s
+    };
+   
+    let stdin = stdin();
+    let mut terminal = Terminal::init()?;
+    // let mut buf = String::new();
+    let (width, height) = termion::terminal_size()?;
+    let flowarea = Rect{
+        x: 1, y: 1, width, height: height-1,
+    };
+    let mut flow = Flow::new(flowarea, 5000, true);
+
+    for line in s.split('\n') {
+        let mut line = line.to_owned();
+        line.push('\n');
+        flow.push_line(RawLine::owned(line));
+    }
+
+    terminal.render_widget(&mut flow, flowarea)?;
+    // let (cursor_x, cursor_y) = cmdbar.cursor_pos(area, true);
+    terminal.flush(vec![flowarea])?;
+    terminal.set_cursor(1, height)?;
+
+    for key in stdin.keys() {
+        match key? {
+            Key::Ctrl('q') => break,
+            Key::Char(c) => {
+                let mut cmd = String::new();
+                cmd.push(c);
+                cmd.push_str("\r\n");
+                flow.push_line(RawLine::raw(cmd));
+            }
+            Key::Left => write!(terminal, "{}", termion::cursor::Left(1))?,
+            _ => (),
+        }
+        terminal.render_widget(&mut flow, flowarea)?;
+        terminal.flush(vec![flowarea])?;
+        terminal.set_cursor(1, height)?;
+    }
     Ok(())
 }
 
@@ -39,14 +183,14 @@ fn run4() -> Result<()> {
     let mut terminal = Terminal::init()?;
     // let mut buf = String::new();
     let (width, height) = termion::terminal_size()?;
-    let mut cmdbar = CmdBar::new(Block::default(), '.');
+    let mut cmdbar = CmdBar::new('.', true);
     let area = Rect {
         x: 1,
         y: height - 2,
         width,
         height: 3,
     };
-    terminal.render_widget(&mut cmdbar, area, true)?;
+    terminal.render_widget(&mut cmdbar, area)?;
     let (cursor_x, cursor_y) = cmdbar.cursor_pos(area, true);
     terminal.flush(vec![Rect {
         x: 1,
@@ -68,7 +212,7 @@ fn run4() -> Result<()> {
             Key::Left => write!(terminal, "{}", termion::cursor::Left(1))?,
             _ => (),
         }
-        terminal.render_widget(&mut cmdbar, area, true)?;
+        terminal.render_widget(&mut cmdbar, area)?;
         terminal.flush(vec![area])?;
         let (cursor_x, cursor_y) = cmdbar.cursor_pos(area, true);
         terminal.set_cursor(cursor_x, cursor_y)?;

@@ -121,18 +121,20 @@ pub trait Buffer {
     ) -> Option<u16> {
         debug_assert!(
             x >= self.area().left() && right <= self.area().right(),
-            "x={},right={} not in buffer {}..{}",
+            "x={},right={} not in buffer {}..{}, s={}",
             x,
             right,
             self.area().left(),
-            self.area().right()
+            self.area().right(),
+            s.as_ref(),
         );
         debug_assert!(
             y >= self.area().top() && y < self.area().bottom(),
-            "y={} not in buffer {}..{}",
+            "y={} not in buffer {}..{}, s={}",
             y,
             self.area().top(),
-            self.area().bottom()
+            self.area().bottom(),
+            s.as_ref(),
         );
         let s = s.as_ref();
         // 处理行结束符
@@ -185,6 +187,8 @@ pub trait Buffer {
     }
 
     /// 比较两份缓存，并返回需要更新的单元列表
+    ///
+    /// 对于宽字符集，部分终端渲染可能导致字符元素的残留
     fn diff<'a, B>(&self, other: &'a B, updates: &mut Vec<(u16, u16, Cell)>)
     where
         B: Buffer,
@@ -209,6 +213,37 @@ pub trait Buffer {
                 to_skip = nc.symbol.width.saturating_sub(1);
                 let affacted_width = std::cmp::max(nc.symbol.width, cc.symbol.width);
                 invalidated = std::cmp::max(affacted_width, invalidated).saturating_sub(1);
+            }
+        }
+    }
+
+    /// 对两份缓存的整行进行比较，只要有不同，则将整行添加进更新列表
+    ///
+    /// 对于宽字符集，部分终端渲染有问题，以单元格diff将导致页面上字符元素的残留。
+    /// 因此采取擦除整行再重写的策略
+    fn diff_by_line<'a, B>(&self, other: &'a B, updates: &mut Vec<(u16, Vec<Cell>)>)
+    where
+        B: Buffer,
+    {
+        debug_assert_eq!(
+            self.area(),
+            other.area(),
+            "compare buffers with different areas: {:?} vs {:?}",
+            self.area(),
+            other.area()
+        );
+        for y in self.area().top()..self.area().bottom() {
+            for x in self.area().left()..self.area().right() {
+                let cc = self.get(x, y);
+                let nc = other.get(x, y);
+                if cc != nc {
+                    let mut line = Vec::with_capacity(self.area().width as usize);
+                    for x in self.area().left()..self.area().right() {
+                        line.push(other.get(x, y).clone());
+                    }
+                    updates.push((y, line));
+                    break;
+                }
             }
         }
     }
@@ -332,6 +367,8 @@ impl Buffer for BufferSubset<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::symbol::HORIZONTAL;
+    use unicode_segmentation::UnicodeSegmentation;
     #[test]
     fn test_buffer_set_single_line() {
         let mut buffer = BufferVec::empty(Rect::new(1, 1, 5, 1));
@@ -404,6 +441,34 @@ mod tests {
         let mut updates = vec![];
         buf1.diff(&buf2, &mut updates);
         println!("updates={:#?}", updates);
+    }
+
+    #[test]
+    fn test_buffer_move() {
+        let area = Rect::new(1, 1, 10, 4);
+        let mut buf1 = BufferVec::empty(area);
+        buf1.set_line_str(1, 1, "静言\r\n", area.right(), Style::default(), true);
+        buf1.set_line_str(1, 2, "┌───基本知识\r\n", area.right(), Style::default(), true);
+        buf1.set_line_str(1, 3, "│ 读书\r\n", area.right(), Style::default(), true);
+        buf1.set_line_str(1, 4, "│ 叫化\r\n", area.right(), Style::default(), true);
+        let mut buf2 = BufferVec::empty(area);
+        buf2.set_line_str(1, 1, "┌───基本知识\r\n", area.right(), Style::default(), true);
+        buf2.set_line_str(1, 2, "│ 读书\r\n", area.right(), Style::default(), true);
+        buf2.set_line_str(1, 3, "│ 叫化\r\n", area.right(), Style::default(), true);
+        buf2.set_line_str(1, 4, "│ 道听\r\n", area.right(), Style::default(), true);
+        let mut updates = vec![];
+        buf1.diff(&buf2, &mut updates);
+        println!("updates={:#?}", updates);
+    }
+
+    #[test]
+    fn test_unicode_segmentation() {
+        let mut s = String::new();
+        s.push(HORIZONTAL);
+        s.push(HORIZONTAL);
+        for g in s.graphemes(true) {
+            println!("{}", g);
+        }
     }
 
     fn single_line(buffer: &BufferVec) -> String {

@@ -49,7 +49,6 @@ impl Flow {
         if let Some(last_line) = self.raw.back_mut() {
             if !last_line.ended() {
                 last_line.push_line(line);
-                // self.partial_ready = true;
                 return;
             }
         }
@@ -116,8 +115,24 @@ fn parse_ansi_line(
             display.push_back(wl);
         }
     }
-    while display.len() > height {
-        display.pop_front();
+    let mut len: usize = display.iter().map(|wl| wl.0.len()).sum();
+    if len > height {
+        'outer: loop {
+            let mut head = display.pop_front().unwrap();
+            if head.0.len() == 1 {
+                len -= 1;
+                if len == height {
+                    break 'outer;
+                }
+            } else {
+                while let Some(_) = head.0.pop() {
+                    len -= 1;
+                    if len == height {
+                        break 'outer;
+                    }
+                }
+            }
+        }
     }
 }
 

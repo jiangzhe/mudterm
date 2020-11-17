@@ -70,7 +70,12 @@ impl Terminal {
             let prev_buf = prev_buf.subset(area)?;
             prev_buf.diff(&curr_buf, &mut updates);
         }
-        eprintln!("updates={:#?}", updates);
+        // eprintln!("updates={:#?}", updates);
+        eprintln!("updates=");
+        for u in &updates {
+            eprintln!("{:?}", u);
+        }
+        eprintln!();
         draw_updates(&mut self.out, updates)?;
         self.out.flush()?;
         std::mem::swap(&mut self.prev_buf, &mut self.curr_buf);

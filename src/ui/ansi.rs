@@ -123,31 +123,38 @@ impl AnsiParser {
             .find(|c| c != ';' && (c < '0' || c > '9'))
             .map(|pos| {
                 let pos = start + pos;
-                if buf.as_ref().as_bytes()[pos] != b'm' {
-                    // 当前仅支持SGR参数
-                    eprintln!(
-                        "unsupported CSI sequence {:?}",
-                        buf.as_ref()[start..=pos].as_bytes()
-                    );
-                    return (self.style, pos + 1);
-                }
-                let mut style = self.style;
-                let mut n = 0;
-                for c in buf.as_ref()[start..pos].chars() {
-                    match c {
-                        ';' => {
-                            style = apply_ansi_sgr(style, n);
-                            n = 0;
+                match buf.as_ref().as_bytes()[pos] {
+                    b'm' => {
+                        let mut style = self.style;
+                        let mut n = 0;
+                        for c in buf.as_ref()[start..pos].chars() {
+                            match c {
+                                ';' => {
+                                    style = apply_ansi_sgr(style, n);
+                                    n = 0;
+                                }
+                                '0'..='9' => {
+                                    n *= 10;
+                                    n += (c as u8) - b'0';
+                                }
+                                other => unreachable!("unreachable char '{}' in sgm sequence", other),
+                            }
                         }
-                        '0'..='9' => {
-                            n *= 10;
-                            n += (c as u8) - b'0';
-                        }
-                        other => unreachable!("unreachable char '{}' in sgm sequence", other),
+                        style = apply_ansi_sgr(style, n);
+                        (style, pos + 1)
+                    }
+                    b'z' => {
+                        eprintln!("ignore escape sequence 'ESC[Nz'");
+                        (self.style, pos + 1)
+                    }
+                    _ => {
+                        eprintln!(
+                            "unsupported CSI sequence {:?}",
+                            buf.as_ref()[start..=pos].as_bytes()
+                        );
+                        (self.style, pos + 1)
                     }
                 }
-                style = apply_ansi_sgr(style, n);
-                (style, pos + 1)
             })
     }
 }

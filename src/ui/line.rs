@@ -32,7 +32,8 @@ impl AsRef<str> for RawLine {
 }
 
 impl RawLine {
-    pub fn owned(line: String) -> Self {
+    pub fn owned(line: impl Into<String>) -> Self {
+        let line = line.into();
         let len = line.len();
         Self(Arc::from(line), 0, len)
     }
