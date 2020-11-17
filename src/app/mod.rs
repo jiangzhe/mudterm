@@ -21,12 +21,12 @@ pub fn standalone(config: Config) -> Result<()> {
     let serverlog = File::create(&config.server.log_file)?;
 
     // 1. init runtime
-    eprintln!("initilizing runtime with config");
+    log::info!("initilizing runtime with config");
     let mut rt = Runtime::new(evttx.clone(), &config);
     rt.set_logger(serverlog);
 
     // 2. connect to mud
-    eprintln!("connecting to world {}", world_addr);
+    log::info!("connecting to world {}", world_addr);
     let (from_mud, to_mud) = {
         let from_mud = TcpStream::connect(world_addr)?;
         let to_mud = from_mud.try_clone()?;
@@ -34,21 +34,21 @@ pub fn standalone(config: Config) -> Result<()> {
     };
 
     // 3. start io threads
-    eprintln!("starting thread handling message to mud server");
+    log::info!("starting thread handling message to mud server");
     let worldtx = server::start_to_mud_handle(evttx.clone(), to_mud);
-    eprintln!("starting thread handling message from mud server");
+    log::info!("starting thread handling message from mud server");
     server::start_from_mud_handle(evttx.clone(), from_mud);
 
     // 4. start userinput thread
-    eprintln!("starting thread handling keyboard and mouse events");
+    log::info!("starting thread handling keyboard and mouse events");
     let _ = client::start_userinput_handle(evttx.clone());
 
     // 5. start signal thread
-    eprintln!("starting thread handling window resize");
+    log::info!("starting thread handling window resize");
     let _ = client::start_signal_handle(evttx.clone());
 
     // 6. start ui thread
-    eprintln!("starting thread handling user interface");
+    log::info!("starting thread handling user interface");
     let (uitx, uihandle) = client::start_ui_handle(config.term, evttx)?;
 
     // 7. run event loop on main thread
@@ -68,12 +68,12 @@ pub fn client(config: Config) -> Result<()> {
     let clientlog = File::create(&config.client.log_file)?;
 
     // 1. init runtime
-    eprintln!("initilizing runtime with config");
+    log::info!("initilizing runtime with config");
     let mut rt = Runtime::new(evttx.clone(), &config);
     rt.set_logger(clientlog);
 
     // 2. connect to server
-    eprintln!("connecting to server {}", server_addr);
+    log::info!("connecting to server {}", server_addr);
     let (from_server, to_server) = {
         let from_server = TcpStream::connect(&server_addr)?;
         let from_server = auth::client_auth(from_server, &server_pass)?;
@@ -82,21 +82,21 @@ pub fn client(config: Config) -> Result<()> {
     };
 
     // 3. start io threads
-    eprintln!("starting thread handling message to mudterm server");
+    log::info!("starting thread handling message to mudterm server");
     let srvtx = client::start_to_server_handle(to_server);
-    eprintln!("starting thread handling message from mudterm server");
+    log::info!("starting thread handling message from mudterm server");
     client::start_from_server_handle(evttx.clone(), from_server);
 
     // 4. start userinput thread
-    eprintln!("starting thread handling keyboard and mouse events");
+    log::info!("starting thread handling keyboard and mouse events");
     let _ = client::start_userinput_handle(evttx.clone());
 
     // 5. start signal thread
-    eprintln!("starting thread handling window resize");
+    log::info!("starting thread handling window resize");
     let _ = client::start_signal_handle(evttx.clone());
 
     // 6. start ui thread
-    eprintln!("starting thread handling user interface");
+    log::info!("starting thread handling user interface");
     let (uitx, uihandle) = client::start_ui_handle(config.term, evttx)?;
 
     // 7. run event loop on main thread
@@ -118,12 +118,12 @@ pub fn server(config: Config) -> Result<()> {
     let serverlog = File::create(&config.server.log_file)?;
 
     // 1. init runtime
-    eprintln!("initilizing runtime with config");
+    log::info!("initilizing runtime with config");
     let mut rt = Runtime::new(evttx.clone(), &config);
     rt.set_logger(serverlog);
 
     // 2. connect to mud
-    eprintln!("connecting to mud server {:?}", world_addr);
+    log::info!("connecting to mud server {:?}", world_addr);
     let (from_mud, to_mud) = {
         let from_mud = TcpStream::connect(world_addr)?;
         let to_mud = from_mud.try_clone()?;
@@ -131,14 +131,14 @@ pub fn server(config: Config) -> Result<()> {
     };
 
     // 3. start server thread
-    eprintln!("start thread to bind local port {}", server_port);
+    log::info!("start thread to bind local port {}", server_port);
     let listener = TcpListener::bind(format!("0.0.0.0:{}", config.server.port))?;
     server::start_server_listener_handle(listener, evttx.clone());
 
     // 4. start io threads for mud communication
-    eprintln!("starting thread handling message to mud server");
+    log::info!("starting thread handling message to mud server");
     let worldtx = server::start_to_mud_handle(evttx.clone(), to_mud);
-    eprintln!("starting thread handling message from mud server");
+    log::info!("starting thread handling message from mud server");
     server::start_from_mud_handle(evttx, from_mud);
 
     // 7. run event loop on main thread

@@ -48,21 +48,20 @@ where
         for event in events {
             match event {
                 TelnetEvents::IAC(TelnetIAC { command }) => {
-                    eprintln!("TelnetIAC[command={}]", command);
+                    log::trace!("TelnetIAC[command={}]", command);
                 }
                 TelnetEvents::Negotiation(TelnetNegotiation { command, option }) => {
-                    eprintln!("TelnetNegotiation[command={}, option={}]", command, option);
+                    log::trace!("TelnetNegotiation[command={}, option={}]", command, option);
                 }
                 TelnetEvents::DataReceive(bs) => {
                     // text.extend(bs);
                     self.buf.push_back(TelnetEvent::Text(bs));
                 }
                 TelnetEvents::DataSend(bs) => {
-                    // eprintln!("TelnetDataSend={:?}", bs);
                     self.buf.push_back(TelnetEvent::DataToSend(bs));
                 }
                 TelnetEvents::Subnegotiation(TelnetSubnegotiation { option, buffer }) => {
-                    eprintln!(
+                    log::trace!(
                         "TelnetSubnegotiation[option={}, buffer={:?}]",
                         option, buffer
                     );

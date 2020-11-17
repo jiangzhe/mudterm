@@ -95,6 +95,8 @@ impl Default for Term {
 pub struct CmdOpts {
     #[structopt(short, long, default_value = "mud.toml")]
     pub conf_file: String,
+    #[structopt(short, long, default_value = "info")]
+    pub log_level: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

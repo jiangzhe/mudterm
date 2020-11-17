@@ -17,7 +17,7 @@ pub fn start_from_mud_handle(evttx: Sender<Event>, from_mud: impl io::Read + Sen
         loop {
             match telnet.recv() {
                 Err(e) => {
-                    eprintln!("channel receive telnet message error {}", e);
+                    log::error!("channel receive telnet message error {}", e);
                     return;
                 }
                 Ok(TelnetEvent::Disconnected) => {
@@ -44,13 +44,13 @@ pub fn start_to_mud_handle(
         loop {
             match rx.recv() {
                 Err(e) => {
-                    eprintln!("error channel receive outbound message {}", e);
+                    log::error!("channel receive outbound message error {}", e);
                     let _ = evttx.send(Event::WorldDisconnected);
                     return;
                 }
                 Ok(bs) => {
                     if let Err(e) = outbound.send(bs) {
-                        eprintln!("send server error: {}", e);
+                        log::error!("send server error: {}", e);
                     }
                 }
             }
@@ -64,7 +64,7 @@ pub fn start_server_listener_handle(listener: TcpListener, evttx: Sender<Event>)
     thread::spawn(move || loop {
         let (conn, addr) = match listener.accept() {
             Err(e) => {
-                eprintln!("accept new client connection error {}", e);
+                log::error!("accept new client connection error {}", e);
                 thread::sleep(Duration::from_secs(1));
                 continue;
             }
@@ -92,7 +92,7 @@ fn start_to_client_handle(conn: TcpStream, pass: String, evttx: Sender<Event>) -
         loop {
             match rx.recv() {
                 Err(e) => {
-                    eprintln!(
+                    log::error!(
                         "channel receive server message error {}, stop this thread",
                         e
                     );
@@ -107,7 +107,7 @@ fn start_to_client_handle(conn: TcpStream, pass: String, evttx: Sender<Event>) -
                 }
             }
         }
-        eprintln!("to_client handle exited");
+        log::info!("to_client handle exited");
     });
     tx
 }
@@ -124,7 +124,7 @@ fn start_from_client_handle(mut conn: TcpStream, evttx: Sender<Event>) {
                 evttx.send(Event::UserInputLine(s)).unwrap();
             }
             Ok(other) => {
-                eprintln!("received unexpected packet from client {:?}", other);
+                log::warn!("received unexpected packet from client {:?}", other);
             }
         }
     });
@@ -154,9 +154,9 @@ impl EventHandler for Server {
     fn on_event(&mut self, evt: Event, rt: &mut Runtime) -> Result<NextStep> {
         match evt {
             Event::NewClient(conn, addr) => {
-                eprintln!("client connected from {:?}", addr);
+                log::info!("client connected from {:?}", addr);
                 if let Some((_, ref addr)) = self.to_cli {
-                    eprintln!(
+                    log::warn!(
                         "drop the connection because only one client allowed, current client {:?}",
                         addr
                     );
@@ -166,24 +166,23 @@ impl EventHandler for Server {
                 self.to_cli = Some((tx, addr));
             }
             Event::ClientAuthFail => {
-                eprintln!("client auth failed");
+                log::info!("client auth failed");
                 self.to_cli.take();
             }
             Event::ClientAuthSuccess(mut conn) => {
-                eprintln!("client auth succeeded, starting thread to handle incoming messages");
-                // let lastn = self.line_cache.lastn(50000);
+                log::info!("client auth succeeded, starting thread to handle incoming messages");
                 let lines = self.buffer.to_vec();
                 // todo: separate multiple batch
                 let pkt = Packet::Lines(lines);
                 if let Err(e) = pkt.write_to(&mut conn) {
-                    eprintln!("channel send client style text error {}", e);
+                    log::error!("channel send client style text error {}", e);
                     // maybe client disconnected, discard this connection
                     return Ok(NextStep::Run);
                 }
                 start_from_client_handle(conn, rt.evttx.clone());
             }
             Event::ClientDisconnect => {
-                eprintln!("client disconnected");
+                log::info!("client disconnected");
                 self.to_cli.take();
             }
             // 直接发送给MUD
@@ -204,7 +203,7 @@ impl EventHandler for Server {
                 // todo: implements trigger by tick
             }
             Event::WorldDisconnected => {
-                eprintln!("world down or disconnected, shutdown server");
+                log::warn!("world down or disconnected, shutdown server");
                 return Ok(NextStep::Quit);
             }
             Event::Quit
@@ -236,7 +235,7 @@ impl RuntimeEventHandler for Server {
                 if let Some((clitx, _)) = self.to_cli.as_mut() {
                     let lines = lines.into_vec();
                     if let Err(e) = clitx.send(Packet::Lines(lines)) {
-                        eprintln!("channel send to-client message error {}", e);
+                        log::error!("channel send to-client message error {}", e);
                     }
                 }
             }

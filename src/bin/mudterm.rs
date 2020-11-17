@@ -16,6 +16,7 @@ fn main() -> Result<()> {
             &cmdopts.conf_file
         )));
     }
+
     let config: Config = {
         let mut f = File::open(&cmdopts.conf_file)?;
         let mut toml_str = String::new();
@@ -25,9 +26,23 @@ fn main() -> Result<()> {
 
     // redirect stderr to file
     let debuglog = File::create(&config.server.debug_file)?;
-    let _stderr_redirect = Redirect::stderr(debuglog)
-        .map_err(|e| Error::RuntimeError(format!("Redirect stderr error {}", e)))?;
-    eprintln!("starting mudterm in {:?} mode", config.mode);
+    let _stderr_redirect = Redirect::stderr(debuglog).unwrap();
+    let verbosity = match &cmdopts.log_level[..] {
+        "error" => 1,
+        "warn" => 2,
+        "info" => 3,
+        "debug" => 4,
+        "trace" => 5,
+        _ => 3,
+    };
+    stderrlog::new()
+        .module(module_path!())
+        .verbosity(verbosity)
+        .timestamp(stderrlog::Timestamp::Millisecond)
+        .init()
+        .unwrap();
+
+    log::info!("starting mudterm in {:?} mode", config.mode);
 
     match config.mode {
         Mode::Standalone => app::standalone(config),

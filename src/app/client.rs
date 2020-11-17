@@ -14,7 +14,7 @@ use std::{io, thread};
 pub fn start_userinput_handle(evttx: Sender<Event>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         if let Err(e) = userinput::subscribe_userinput(evttx) {
-            eprintln!("userinput error {}", e);
+            log::error!("userinput error {}", e);
         }
     })
 }
@@ -23,7 +23,7 @@ pub fn start_userinput_handle(evttx: Sender<Event>) -> thread::JoinHandle<()> {
 pub fn start_signal_handle(evttx: Sender<Event>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         if let Err(e) = signal::subscribe_signals(evttx) {
-            eprintln!("signal error {}", e);
+            log::error!("signal error {}", e);
         }
     })
 }
@@ -38,7 +38,7 @@ pub fn start_ui_handle(
         let mut screen = match Screen::init(evttx.clone()) {
             Ok(screen) => screen,
             Err(e) => {
-                eprintln!("failed to initialize screen {}", e);
+                log::error!("failed to initialize screen {}", e);
                 let _ = evttx.send(Event::Quit);
                 return;
             }
@@ -47,7 +47,7 @@ pub fn start_ui_handle(
         loop {
             match uirx.recv() {
                 Err(e) => {
-                    eprintln!("error channel receive ui event {}", e);
+                    log::error!("channel receive ui event error {}", e);
                     let _ = evttx.send(Event::Quit);
                     break;
                 }
@@ -55,7 +55,7 @@ pub fn start_ui_handle(
                     let to_quit = match screen.process_event(evt) {
                         Ok(f) => f,
                         Err(e) => {
-                            eprintln!("failed to process event {}", e);
+                            log::error!("failed to process event {}", e);
                             let _ = evttx.send(Event::Quit);
                             break;
                         }
@@ -75,12 +75,12 @@ pub fn start_to_server_handle(mut to_server: impl io::Write + Send + 'static) ->
     thread::spawn(move || loop {
         match rx.recv() {
             Err(e) => {
-                eprintln!("channel receive to-server message error {}", e);
+                log::error!("channel receive to-server message error {}", e);
                 return;
             }
             Ok(pkt) => {
                 if let Err(e) = pkt.write_to(&mut to_server) {
-                    eprintln!("send message to server error {}", e);
+                    log::error!("send message to server error {}", e);
                     return;
                 }
             }
@@ -96,7 +96,7 @@ pub fn start_from_server_handle(
     thread::spawn(move || loop {
         match Packet::read_from(&mut from_server) {
             Err(e) => {
-                eprintln!("receive server message error {}", e);
+                log::error!("receive server message error {}", e);
                 evttx.send(Event::ServerDown).unwrap();
                 return;
             }
@@ -148,7 +148,7 @@ impl EventHandler for Client {
                 rt.process_user_scripts(s);
             }
             Event::ServerDown => {
-                eprintln!("server down or not reachable");
+                log::error!("server down or not reachable");
                 // let user quit
                 rt.queue
                     .push_line(RawLine::err("与服务器断开了连接，请关闭并重新连接"));

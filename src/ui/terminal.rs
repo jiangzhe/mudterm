@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::ui::ansi::clear::ClearCells;
 use crate::ui::buffer::BufferVec;
 use crate::ui::buffer::{Buffer, Cell};
 use crate::ui::layout::Rect;
@@ -42,11 +43,7 @@ impl Terminal {
         self.size
     }
 
-    pub fn render_widget<W: Widget>(
-        &mut self,
-        widget: &mut W,
-        area: Rect,
-    ) -> Result<()> {
+    pub fn render_widget<W: Widget>(&mut self, widget: &mut W, area: Rect) -> Result<()> {
         let curr_buffer = self.curr_buf_mut();
         let mut subset = curr_buffer.subset(area)?;
         widget.refresh_buffer(&mut subset)?;
@@ -70,12 +67,11 @@ impl Terminal {
             let prev_buf = prev_buf.subset(area)?;
             prev_buf.diff(&curr_buf, &mut updates);
         }
-        // eprintln!("updates={:#?}", updates);
-        eprintln!("updates=");
-        for u in &updates {
-            eprintln!("{:?}", u);
-        }
-        eprintln!();
+        // log::info!("updates=");
+        // for u in &updates {
+        //     log::info!("{:?}", u);
+        // }
+        // log::info!();
         draw_updates(&mut self.out, updates)?;
         self.out.flush()?;
         std::mem::swap(&mut self.prev_buf, &mut self.curr_buf);
@@ -90,16 +86,63 @@ impl Terminal {
     }
 }
 
+/// 由于部分终端对宽字符渲染存在单元残留的问题，
+/// 这里尝试寻找连续的字符，并一次性擦除，再进行渲染
+/// 传入的updates数组需保证在连续的cell中如果纵坐标y一致，横坐标x单调递增
 fn draw_updates<W: Write>(out: &mut W, updates: Vec<(u16, u16, Cell)>) -> Result<()> {
-    let mut next_x: u16 = 0;
-    let mut next_y: u16 = 0;
-    for (x, y, cell) in updates {
-        if x != next_x || y != next_y {
-            write!(out, "{}", termion::cursor::Goto(x, y))?;
+    let (mut line, mut start_x, mut start_y, mut next_x) = (Vec::<Cell>::new(), 0, 0, 0);
+    for (x, y, cell) in updates
+        .into_iter()
+        .chain(std::iter::once((0, 0, Cell::default())))
+    {
+        if y != start_y {
+            // 换行
+            // 行不为空时执行渲染逻辑
+            if !line.is_empty() {
+                // 清除连续单元
+                write!(
+                    out,
+                    "{}{}",
+                    termion::cursor::Goto(start_x, start_y),
+                    ClearCells(next_x - start_x)
+                )?;
+                //执行写入
+                for cell in line.drain(..) {
+                    write!(out, "{}{}", cell.style(), cell.symbol.ch)?;
+                }
+            }
+            // 设置新行
+            start_x = x;
+            start_y = y;
+            next_x = x + cell.symbol.width as u16;
+            line.push(cell);
+            continue;
         }
-        write!(out, "{}{}", cell.style(), cell.symbol.ch)?;
-        next_x = x;
-        next_y = y + cell.symbol.width as u16;
+        // 在同一行，检查字符间是否连续
+        if x != next_x {
+            // 不连续，执行渲染逻辑
+            // 清除连续单元
+            write!(
+                out,
+                "{}{}",
+                termion::cursor::Goto(start_x, start_y),
+                ClearCells(next_x - start_x)
+            )?;
+            //执行写入
+            for cell in line.drain(..) {
+                write!(out, "{}{}", cell.style(), cell.symbol.ch)?;
+            }
+            // 设置新行
+            start_x = x;
+            start_y = y;
+            next_x = x + cell.symbol.width as u16;
+            line.push(cell);
+            continue;
+        }
+
+        // 在同一行，且字符间连续
+        next_x += cell.symbol.width as u16;
+        line.push(cell);
     }
     Ok(())
 }

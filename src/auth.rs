@@ -31,7 +31,7 @@ pub fn server_auth(mut conn: TcpStream, pass: &str) -> Result<TcpStream> {
     // reset socket timeout
     conn.set_read_timeout(orig_read_timeout)?;
     conn.set_write_timeout(orig_write_timeout)?;
-    eprintln!("server auth succeeds");
+    log::debug!("server auth succeeds");
     Ok(conn)
 }
 
@@ -56,7 +56,7 @@ pub fn client_auth(mut conn: TcpStream, pass: &str) -> Result<TcpStream> {
     // reset socket timeout
     conn.set_read_timeout(orig_read_timeout)?;
     conn.set_write_timeout(orig_write_timeout)?;
-    eprintln!("client auth succeeds");
+    log::debug!("client auth succeeds");
     Ok(conn)
 }
 

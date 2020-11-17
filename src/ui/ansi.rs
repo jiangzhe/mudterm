@@ -2,6 +2,18 @@ use crate::ui::span::Span;
 use crate::ui::style::{Color, Modifier, Style};
 use std::sync::Arc;
 
+pub mod clear {
+
+    #[derive(Debug, Clone)]
+    pub struct ClearCells(pub u16);
+
+    impl std::fmt::Display for ClearCells {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "\x1b[{}X", self.0)
+        }
+    }
+}
+
 /// 将ansi字符流转换为ArcSpan流
 #[derive(Debug)]
 pub struct AnsiParser {
@@ -77,7 +89,7 @@ impl AnsiParser {
                     return Snippet::Style(style, next);
                 }
                 None => {
-                    eprintln!("unrecognized ansi escape: {:?}", &buf.as_ref()[sgm_start..]);
+                    log::warn!("unrecognized ansi escape: {:?}", &buf.as_ref()[sgm_start..]);
                     return Snippet::Incomplete;
                 }
             }
@@ -137,18 +149,20 @@ impl AnsiParser {
                                     n *= 10;
                                     n += (c as u8) - b'0';
                                 }
-                                other => unreachable!("unreachable char '{}' in sgm sequence", other),
+                                other => {
+                                    unreachable!("unreachable char '{}' in sgm sequence", other)
+                                }
                             }
                         }
                         style = apply_ansi_sgr(style, n);
                         (style, pos + 1)
                     }
                     b'z' => {
-                        eprintln!("ignore escape sequence 'ESC[Nz'");
+                        log::warn!("ignore escape sequence 'ESC[Nz'");
                         (self.style, pos + 1)
                     }
                     _ => {
-                        eprintln!(
+                        log::error!(
                             "unsupported CSI sequence {:?}",
                             buf.as_ref()[start..=pos].as_bytes()
                         );

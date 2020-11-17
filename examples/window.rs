@@ -5,6 +5,7 @@ use mudterm::ui::buffer::{Buffer, BufferVec};
 use mudterm::ui::layout::Rect;
 use mudterm::ui::line::{Line, RawLine, RawLines};
 use mudterm::ui::style::{Color, Style};
+use mudterm::ui::symbol::HORIZONTAL;
 use mudterm::ui::terminal::Terminal;
 use mudterm::ui::widget::cmdbar::CmdBar;
 use mudterm::ui::widget::{Block, Flow, Widget};
@@ -14,10 +15,9 @@ use std::io::{stdin, Read, Write};
 use termion::cursor::DetectCursorPos;
 use termion::event::{Event, Key, MouseButton, MouseEvent};
 use termion::input::{MouseTerminal, TermRead};
-use termion::terminal_size;
-use termion::screen::AlternateScreen;
 use termion::raw::IntoRawMode;
-use mudterm::ui::symbol::HORIZONTAL;
+use termion::screen::AlternateScreen;
+use termion::terminal_size;
 
 fn main() -> Result<()> {
     // run1()
@@ -25,8 +25,8 @@ fn main() -> Result<()> {
     // run3()
     // run4()
     // run5()
-    // run6()
-    run7()
+    run6()
+    // run7()
 }
 
 fn write_style<W: Write>(writer: &mut W, style: Style) -> Result<()> {
@@ -52,40 +52,42 @@ fn run7() -> Result<()> {
     };
     let mut keys = stdin.keys();
     keys.next().unwrap();
-    write!(out, "{}", termion::cursor::Goto(1,1))?;
+    write!(out, "{}", termion::cursor::Goto(1, 1))?;
     write!(out, "{}", line)?;
     out.flush()?;
     keys.next().unwrap();
-    write!(out, "{}", termion::cursor::Goto(1,1))?;
-    write!(out, "{}", "a你我他谁是谁\r\n")?;
+    write!(out, "{}", termion::cursor::Goto(1, 1))?;
+    write!(out, "{}", "你我他谁是谁\r\n")?;
     write!(out, "{}", "千里之行，始于足下\r\n")?;
     out.flush()?;
     keys.next().unwrap();
 
-    write!(out, "\x1b[b;1,1,3,10$x")?;
+    write!(out, "{}", termion::cursor::Goto(2, 1))?;
+    // write!(out, "\x1b[b;1,1,3,10$x")?;
+    write!(out, "\x1b[2X")?;
     out.flush()?;
     keys.next().unwrap();
-    write!(out,"{}", termion::cursor::Goto(1,1))?;
-    write!(out,"{}", HORIZONTAL)?;
+    write!(out, "{}", termion::cursor::Goto(1, 1))?;
+    write!(out, "{}", HORIZONTAL)?;
     // write!(out,"{}", HORIZONTAL)?;
     // write!(out,"{}", termion::cursor::Goto(2,1))?;
     // write!(out,"{}", HORIZONTAL)?;
     // out.flush()?;
     // keys.next().unwrap();
-    write!(out,"{}", termion::cursor::Goto(3,1))?;
-    write!(out,"{}", HORIZONTAL)?;
+    write!(out, "{}", termion::cursor::Goto(3, 1))?;
+    write!(out, "{}", HORIZONTAL)?;
     // write!(out,"{}", termion::cursor::Goto(4,1))?;
     // write!(out,"{} ", HORIZONTAL)?;
     // out.flush()?;
     // keys.next().unwrap();
-    write!(out,"{}", termion::cursor::Goto(5,1))?;
-    write!(out,"{}", HORIZONTAL)?;
+    write!(out, "{}", termion::cursor::Goto(5, 1))?;
+    write!(out, "{}", HORIZONTAL)?;
     // write!(out,"{}", termion::cursor::Goto(6,1))?;
     // write!(out,"{} ", HORIZONTAL)?;
     // out.flush()?;
     // keys.next().unwrap();
-    write!(out,"{}", termion::cursor::Goto(7,1))?;
-    write!(out,"{}", HORIZONTAL)?;
+    write!(out, "{}", termion::cursor::Goto(7, 1))?;
+    write!(out, "{}", HORIZONTAL)?;
     // write!(out,"{}", termion::cursor::Goto(8,1))?;
     // write!(out,"{} ", HORIZONTAL)?;
     out.flush()?;
@@ -102,8 +104,11 @@ fn run6() -> Result<()> {
     let stdin = stdin();
     let mut terminal = Terminal::init()?;
     let (width, height) = termion::terminal_size()?;
-    let flowarea = Rect{
-        x: 1, y: 1, width, height: 4,
+    let flowarea = Rect {
+        x: 1,
+        y: 1,
+        width,
+        height: 4,
     };
     let mut flow = Flow::new(flowarea, 5000, true);
     flow.push_line(RawLine::owned("静言\r\n"));
@@ -114,7 +119,7 @@ fn run6() -> Result<()> {
     terminal.flush(vec![flowarea])?;
     let mut keys = stdin.keys();
     keys.next().unwrap();
-    
+
     flow.push_line(RawLine::owned("│ 道听\r\n"));
     terminal.render_widget(&mut flow, flowarea)?;
     terminal.flush(vec![flowarea])?;
@@ -133,13 +138,16 @@ fn run5() -> Result<()> {
         f.read_to_string(&mut s)?;
         s
     };
-   
+
     let stdin = stdin();
     let mut terminal = Terminal::init()?;
     // let mut buf = String::new();
     let (width, height) = termion::terminal_size()?;
-    let flowarea = Rect{
-        x: 1, y: 1, width, height: height-1,
+    let flowarea = Rect {
+        x: 1,
+        y: 1,
+        width,
+        height: height - 1,
     };
     let mut flow = Flow::new(flowarea, 5000, true);
 
@@ -178,12 +186,18 @@ fn run4() -> Result<()> {
     let debuglog = File::create("window_debug.log")?;
     let _stderr_redirect = Redirect::stderr(debuglog)
         .map_err(|e| Error::RuntimeError(format!("Redirect stderr error {}", e)))?;
+    stderrlog::new()
+        .module(module_path!())
+        .verbosity(4)
+        .timestamp(stderrlog::Timestamp::Millisecond)
+        .init()
+        .unwrap();
 
     let stdin = stdin();
     let mut terminal = Terminal::init()?;
     // let mut buf = String::new();
     let (width, height) = termion::terminal_size()?;
-    let mut cmdbar = CmdBar::new('.', true);
+    let mut cmdbar = CmdBar::new('.', true, 200);
     let area = Rect {
         x: 1,
         y: height - 2,

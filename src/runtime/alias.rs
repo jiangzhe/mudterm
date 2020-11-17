@@ -1,23 +1,12 @@
 use crate::error::Result;
 use crate::runtime::{Pattern, Scripts, Target};
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
+use crate::runtime::model::{Model, ModelExec, ModelStore};
 
-pub struct Alias {
-    pub model: AliasModel,
-    pattern: Pattern,
-    scripts: Scripts,
-}
 
-impl Alias {
-    pub fn is_match(&self, input: &str) -> bool {
-        self.pattern.is_match(input, true)
-    }
+pub type Aliases = ModelStore<AliasModel>;
 
-    pub fn prepare_scripts(&self, input: &str) -> Option<Cow<str>> {
-        super::prepare_scripts(&self.pattern, &self.scripts, input)
-    }
-}
+pub type Alias = ModelExec<AliasModel>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -45,6 +34,36 @@ impl Default for AliasModel {
             enabled: true,
         }
     }
+}
+
+impl Model for AliasModel {
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn group(&self) -> &str {
+        &self.group
+    }
+
+    fn target(&self) -> Target {
+        self.target
+    }
+
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    fn compile(self) -> Result<Alias> {
+        let (pattern, scripts) =
+            super::compile_scripts(&self.pattern, &self.scripts, self.regexp, 1)?;
+        Ok(Alias::new(self, pattern, scripts))
+    }
+
 }
 
 impl AliasModel {
@@ -88,15 +107,5 @@ impl AliasModel {
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
-    }
-
-    pub fn compile(self) -> Result<Alias> {
-        let (pattern, scripts) =
-            super::compile_scripts(&self.pattern, &self.scripts, self.regexp, 1)?;
-        Ok(Alias {
-            model: self,
-            pattern,
-            scripts,
-        })
     }
 }

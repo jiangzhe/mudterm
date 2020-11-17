@@ -1,7 +1,28 @@
 use crate::error::Result;
-use crate::runtime::{Pattern, Scripts, Target};
+use crate::runtime::{Target};
+use crate::runtime::model::{Model, ModelExec, ModelStore};
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
+use bitflags::bitflags;
+
+pub type Trigger = ModelExec<TriggerModel>;
+
+pub type Triggers = ModelStore<Trigger>;
+
+bitflags! {
+    pub struct TriggerFlags: u16 {
+        const Enabled = 0x0001;
+        const OmitFromLog = 0x0002;
+        const OmitFromOutput = 0x0004;
+        const KeepEvaluating = 0x0008;
+        const IgnoreCase = 0x10;
+        const RegularExpression = 0x0020;
+        const ExpandVariables = 0x0200;
+        const LowercaseWildcard = 0x0400;
+        const Replace = 0x0400;
+        const Temporary = 0x4000;
+        const OneShot = 0x8000;
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -30,6 +51,34 @@ impl Default for TriggerModel {
             enabled: false,
             scripts: String::new(),
         }
+    }
+}
+
+impl Model for TriggerModel {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn group(&self) -> &str {
+        &self.group
+    }
+
+    fn target(&self) -> Target {
+        self.target
+    }
+
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    fn compile(self) -> Result<Trigger> {
+        let (pattern, scripts) =
+            super::compile_scripts(&self.pattern, &self.scripts, self.regexp, 1)?;
+        Ok(Trigger::new(self, pattern, scripts))
     }
 }
 
@@ -88,28 +137,7 @@ impl TriggerModel {
             self.regexp,
             self.match_lines as usize,
         )?;
-        Ok(Trigger {
-            model: self,
-            pattern,
-            scripts,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Trigger {
-    pub model: TriggerModel,
-    pattern: Pattern,
-    scripts: Scripts,
-}
-
-impl Trigger {
-    pub fn is_match(&self, input: &str) -> bool {
-        self.pattern.is_match(input, false)
-    }
-
-    pub fn prepare_scripts(&self, input: &str) -> Option<Cow<str>> {
-        super::prepare_scripts(&self.pattern, &self.scripts, input)
+        Ok(Trigger::new(self, pattern, scripts))
     }
 }
 

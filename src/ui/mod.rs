@@ -9,7 +9,6 @@ pub mod symbol;
 pub mod terminal;
 pub mod widget;
 pub mod width;
-// pub mod window;
 
 use crate::error::{Error, Result};
 use crate::event::Event;
@@ -18,7 +17,7 @@ use crossbeam_channel::Sender;
 use layout::Rect;
 use line::RawLine;
 use termion::event::{Key, MouseEvent};
-use widget::{Block, CmdBar, CmdOut, Flow, Widget};
+use widget::{CmdBar, Flow, Output, Widget};
 
 pub trait UICallback {
     fn on_cmd(&mut self, cmd: String);
@@ -81,18 +80,18 @@ impl Screen<EventBusCallback> {
             width,
             height: 3,
         };
-        let cmdbar = CmdBar::new('.', true);
+        let cmdbar = CmdBar::new('.', true, 200);
         let mut uicb = EventBusCallback(evttx);
         let terminal = match Terminal::init() {
             Err(e) => {
-                eprintln!("error init raw terminal {}", e);
+                log::error!("error init raw terminal {}", e);
                 uicb.on_quit();
                 return Err(Error::RuntimeError(
                     "screen initialization failed".to_owned(),
                 ));
             }
             Ok(terminal) => {
-                eprintln!("raw terminal intiailized");
+                log::debug!("raw terminal intiailized");
                 terminal
             }
         };
@@ -113,10 +112,10 @@ impl Screen<EventBusCallback> {
         match event {
             UIEvent::Key(key) => match key {
                 Key::Char('\n') => match self.cmdbar.take() {
-                    CmdOut::Script(s) => {
+                    Output::Script(s) => {
                         self.uicb.on_script(s);
                     }
-                    CmdOut::Cmd(s) => {
+                    Output::Cmd(s) => {
                         self.uicb.on_cmd(s);
                     }
                 },
@@ -126,12 +125,18 @@ impl Screen<EventBusCallback> {
                 Key::Backspace => {
                     self.cmdbar.pop_char();
                 }
+                Key::Up => {
+                    self.cmdbar.prev_cmd();
+                }
+                Key::Down => {
+                    self.cmdbar.next_cmd();
+                }
                 Key::Ctrl('q') => {
                     self.uicb.on_quit();
                     return Ok(true);
                 }
                 k => {
-                    eprintln!("unhandled key {:?}", k);
+                    log::debug!("unhandled key {:?}", k);
                 }
             },
             UIEvent::Lines(lines) => self.flow.push_lines(lines),
@@ -144,15 +149,12 @@ impl Screen<EventBusCallback> {
         }
         self.flush()?;
         let (cursor_x, cursor_y) = self.cmdbar.cursor_pos(self.cmdarea, true);
-        // eprintln!("cursur ({}, {})", cursor_x, cursor_y);
-        // eprintln!("cmdarea={:?}", self.cmdarea);
         self.terminal.set_cursor(cursor_x, cursor_y)?;
         Ok(false)
     }
 
     pub fn flush(&mut self) -> Result<()> {
-        self.terminal
-            .render_widget(&mut self.flow, self.flowarea)?;
+        self.terminal.render_widget(&mut self.flow, self.flowarea)?;
         self.terminal
             .render_widget(&mut self.cmdbar, self.cmdarea)?;
         self.terminal.flush(vec![self.flowarea, self.cmdarea])?;
@@ -160,12 +162,7 @@ impl Screen<EventBusCallback> {
     }
 
     /// 代理Widget更新
-    pub fn render_widget<W: Widget>(
-        &mut self,
-        widget: &mut W,
-        area: Rect,
-        cjk: bool,
-    ) -> Result<()> {
+    pub fn render_widget<W: Widget>(&mut self, widget: &mut W, area: Rect) -> Result<()> {
         self.terminal.render_widget(widget, area)
     }
 }

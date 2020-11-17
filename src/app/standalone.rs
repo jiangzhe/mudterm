@@ -55,7 +55,7 @@ impl EventHandler for Standalone {
                 rt.process_user_scripts(s);
             }
             Event::WorldDisconnected => {
-                eprintln!("world down or not reachable");
+                log::error!("world down or not reachable");
                 // let user quit
                 rt.queue
                     .push_line(RawLine::err("与服务器断开了连接，请关闭并重新连接"));

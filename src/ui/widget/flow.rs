@@ -139,19 +139,18 @@ fn parse_ansi_line(
 impl Widget for Flow {
     fn refresh_buffer<B: Buffer>(&mut self, buf: &mut B) -> Result<()> {
         let mut y = buf.area().top();
-        // eprintln!("flow area {:?}", buf.area());
-        // eprintln!("display wl size {}", self.display.len());
-        // eprintln!(
-        //     "display line size {}",
-        //     self.display.iter().map(|wl| wl.0.len()).sum::<usize>()
-        // );
         for wl in &self.display {
             for l in &wl.0 {
                 let mut x = buf.area().left();
                 for span in &l.spans {
-                    if let Some(pos) =
-                        buf.set_line_str(x, y, &span.content, buf.area().right(), span.style, self.cjk)
-                    {
+                    if let Some(pos) = buf.set_line_str(
+                        x,
+                        y,
+                        &span.content,
+                        buf.area().right(),
+                        span.style,
+                        self.cjk,
+                    ) {
                         x = pos;
                     }
                 }
