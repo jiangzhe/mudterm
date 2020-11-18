@@ -1,7 +1,7 @@
 use crate::error::Result;
 use crate::ui::buffer::Buffer;
 use crate::ui::layout::Rect;
-use crate::ui::style::Style;
+use crate::ui::style::{Color, Style};
 use crate::ui::widget::{Block, Widget};
 use crate::ui::width::AppendWidthTab8;
 use std::collections::VecDeque;
@@ -83,7 +83,6 @@ pub struct CmdBar {
     cmd: Output,
     block: Block,
     style: Style,
-    // script_mode: bool,
     script_prefix: char,
     cjk: bool,
     hist: CmdHist,
@@ -110,7 +109,13 @@ impl CmdBar {
 
     pub fn push_char(&mut self, ch: char) {
         if self.cmd.is_empty() && ch == self.script_prefix {
-            self.cmd = Output::Script(String::new());
+            if self.cmd.is_cmd() {
+                self.cmd = Output::Script(String::new());
+                self.style = Style::default().bg(Color::Blue);
+            } else {
+                self.cmd = Output::Cmd(String::new());
+                self.style = Style::default();
+            }
         } else {
             self.cmd.push(ch);
         }
@@ -119,6 +124,7 @@ impl CmdBar {
     pub fn pop_char(&mut self) -> Option<char> {
         let ch = self.cmd.pop();
         if ch.is_some() && self.cmd.is_empty() && self.cmd.is_script() {
+            self.style = Style::default();
             self.cmd = Output::Cmd(String::new());
         }
         ch
@@ -128,6 +134,7 @@ impl CmdBar {
         let cmd = std::mem::replace(&mut self.cmd, Output::default());
         // 每次都记录历史
         self.hist.push(cmd.clone());
+        self.style = Style::default();
         cmd
     }
 
@@ -153,6 +160,7 @@ impl Widget for CmdBar {
         self.block.refresh_buffer(buf)?;
 
         let bararea = self.block.inner_area(*buf.area());
+        buf.set_style(bararea, self.style);
         buf.set_line_str(
             bararea.left(),
             bararea.top(),

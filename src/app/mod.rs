@@ -24,6 +24,7 @@ pub fn standalone(config: Config) -> Result<()> {
     log::info!("initilizing runtime with config");
     let mut rt = Runtime::new(evttx.clone(), &config);
     rt.set_logger(serverlog);
+    rt.init()?;
 
     // 2. connect to mud
     log::info!("connecting to world {}", world_addr);
@@ -71,6 +72,7 @@ pub fn client(config: Config) -> Result<()> {
     log::info!("initilizing runtime with config");
     let mut rt = Runtime::new(evttx.clone(), &config);
     rt.set_logger(clientlog);
+    rt.init()?;
 
     // 2. connect to server
     log::info!("connecting to server {}", server_addr);
@@ -121,6 +123,7 @@ pub fn server(config: Config) -> Result<()> {
     log::info!("initilizing runtime with config");
     let mut rt = Runtime::new(evttx.clone(), &config);
     rt.set_logger(serverlog);
+    rt.init()?;
 
     // 2. connect to mud
     log::info!("connecting to mud server {:?}", world_addr);

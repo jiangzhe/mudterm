@@ -58,7 +58,7 @@ impl EventHandler for Standalone {
                 log::error!("world down or not reachable");
                 // let user quit
                 rt.queue
-                    .push_line(RawLine::err("与服务器断开了连接，请关闭并重新连接"));
+                    .push_line(RawLine::fmt_err("与服务器断开了连接，请关闭并重新连接"));
             }
             // standalone模式不支持客户端连接，待增强
             Event::NewClient(..)

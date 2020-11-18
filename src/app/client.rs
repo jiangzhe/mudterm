@@ -151,7 +151,7 @@ impl EventHandler for Client {
                 log::error!("server down or not reachable");
                 // let user quit
                 rt.queue
-                    .push_line(RawLine::err("与服务器断开了连接，请关闭并重新连接"));
+                    .push_line(RawLine::fmt_err("与服务器断开了连接，请关闭并重新连接"));
             }
             // client模式不支持客户端连接
             Event::NewClient(..)

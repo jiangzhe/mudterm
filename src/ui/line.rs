@@ -1,29 +1,10 @@
 use crate::ui::span::Span;
+use crate::ui::style::{Color, Style};
 use crate::ui::width::AppendWidthTab8;
 use std::collections::VecDeque;
-use std::sync::Arc;
 
-#[derive(Debug)]
-pub struct RawLine(Arc<str>, usize, usize);
-
-impl PartialEq for RawLine {
-    fn eq(&self, other: &Self) -> bool {
-        self.content() == other.content()
-    }
-}
-
-impl Clone for RawLine {
-    fn clone(&self) -> Self {
-        let Self(s, start, end) = self;
-        // 判断如果是整行，或者长度不小于128，直接复制
-        if (*start == 0 && *end == s.len()) || *end >= *start + 128 {
-            return Self(s.clone(), *start, *end);
-        }
-        // 较短时复制字符串
-        let s = s.as_ref()[*start..*end].to_owned();
-        Self::owned(s)
-    }
-}
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawLine(String);
 
 impl AsRef<str> for RawLine {
     fn as_ref(&self) -> &str {
@@ -32,55 +13,55 @@ impl AsRef<str> for RawLine {
 }
 
 impl RawLine {
-    pub fn owned(line: impl Into<String>) -> Self {
-        let line = line.into();
-        let len = line.len();
-        Self(Arc::from(line), 0, len)
+    pub fn new(line: impl Into<String>) -> Self {
+        Self(line.into())
     }
 
-    pub fn borrowed(line: Arc<str>, start: usize, end: usize) -> Self {
-        debug_assert!(end >= start);
-        Self(line, start, end)
-    }
-
-    pub fn err(line: impl AsRef<str>) -> Self {
+    pub fn fmt_err(line: impl AsRef<str>) -> Self {
         let formatted = format!(
             "{}{}{}\r\n",
             termion::style::Invert,
             line.as_ref(),
             termion::style::Reset
         );
-        Self::owned(formatted)
+        Self::new(formatted)
     }
 
-    pub fn note(line: impl AsRef<str>) -> Self {
+    pub fn fmt_note(line: impl AsRef<str>) -> Self {
         let formatted = format!(
             "{}{}{}\r\n",
-            termion::color::Fg(termion::color::LightBlue),
+            Style::default().fg(Color::LightBlue),
             line.as_ref(),
             termion::style::Reset
         );
-        Self::owned(formatted)
+        Self::new(formatted)
     }
 
-    pub fn raw(line: impl AsRef<str>) -> Self {
-        let formatted = format!("{}{}\r\n", termion::style::Reset, line.as_ref());
-        Self::owned(formatted)
+    pub fn fmt_raw(line: impl AsRef<str>) -> Self {
+        let formatted = format!(
+            "{}{}{}\r\n",
+            termion::style::Reset,
+            line.as_ref(),
+            termion::style::Reset
+        );
+        Self::new(formatted)
+    }
+
+    pub fn fmt(line: impl AsRef<str>, style: Style) -> Self {
+        let formatted = format!("{}{}{}\r\n", style, line.as_ref(), termion::style::Reset);
+        Self::new(formatted)
     }
 
     pub fn ended(&self) -> bool {
-        let Self(s, start, end) = self;
-        s.as_ref()[*start..*end].ends_with('\n')
+        self.0.ends_with('\n')
     }
 
     pub fn len(&self) -> usize {
-        let Self(_, start, end) = self;
-        *end - *start
+        self.0.len()
     }
 
     pub fn content(&self) -> &str {
-        let Self(s, start, end) = self;
-        &s.as_ref()[*start..*end]
+        self.0.as_ref()
     }
 
     // maybe expensive because we need to copy the referenced string
@@ -89,10 +70,7 @@ impl RawLine {
             // already ended, do not append
             return false;
         }
-        let Self(s, start, end) = self;
-        let mut s = s.as_ref()[*start..*end].to_owned();
-        s.push_str(line.as_ref());
-        *self = Self::owned(s);
+        self.0.push_str(line.as_ref());
         true
     }
 }

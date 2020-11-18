@@ -1,8 +1,8 @@
 use crate::error::Result;
-use crate::runtime::{Target};
 use crate::runtime::model::{Model, ModelExec, ModelStore};
-use serde::{Deserialize, Serialize};
+use crate::runtime::Target;
 use bitflags::bitflags;
+use serde::{Deserialize, Serialize};
 
 pub type Trigger = ModelExec<TriggerModel>;
 

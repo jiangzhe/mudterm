@@ -206,6 +206,30 @@ pub enum Color {
     White,
 }
 
+impl Color {
+    pub fn from_str_or_default(name: impl AsRef<str>, default: Color) -> Self {
+        match name.as_ref() {
+            "black" => Self::Black,
+            "red" => Self::Red,
+            "green" => Self::Green,
+            "yellow" => Self::Yellow,
+            "blue" => Self::Blue,
+            "magenta" => Self::Magenta,
+            "cyan" => Self::Cyan,
+            "gray" => Self::Gray,
+            "darkgray" => Self::DarkGray,
+            "lightred" => Self::LightRed,
+            "lightgreen" => Self::LightGreen,
+            "lightyellow" => Self::LightYellow,
+            "lightblue" => Self::LightBlue,
+            "lightmagenta" => Self::LightMagenta,
+            "lightcyan" => Self::LightCyan,
+            "white" => Self::White,
+            _ => default,
+        }
+    }
+}
+
 bitflags! {
     pub struct Modifier: u16 {
         const BOLD              = 0b0000_0000_0001;

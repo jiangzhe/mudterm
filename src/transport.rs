@@ -63,7 +63,8 @@ where
                 TelnetEvents::Subnegotiation(TelnetSubnegotiation { option, buffer }) => {
                     log::trace!(
                         "TelnetSubnegotiation[option={}, buffer={:?}]",
-                        option, buffer
+                        option,
+                        buffer
                     );
                 }
                 _ => (),

@@ -17,7 +17,6 @@ encoding = "0.2"
 thiserror = "1.0"
 log = "0.4"
 env_logger = "0.8"
-rlua = "0.17"
 crossbeam-channel = "0.5"
 lazy_static = "1.4"
 signal-hook = "0.1"
@@ -36,3 +35,5 @@ structopt = "0.3"
 bitflags = "1.2"
 unicode-segmentation = "1.6"
 stderrlog = "0.5"
+mlua = { version = "0.4", features = [ "lua51" ] }
+uuid = { version = "0.8", features = [ "serde", "v4" ] }

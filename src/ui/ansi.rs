@@ -192,6 +192,10 @@ fn apply_ansi_sgr(mut style: Style, code: u8) -> Style {
         7 => style.add_modifier(Modifier::REVERSED),
         8 => style.add_modifier(Modifier::HIDDEN),
         9 => style.add_modifier(Modifier::CROSSED_OUT),
+        12 => {
+            log::debug!("ESC[ 12 m => hide following chars(0x00 - 0x7F), not implemented");
+            style
+        }
         21 => style.remove_modifier(Modifier::BOLD),
         22 => style.remove_modifier(Modifier::DIM),
         23 => style.remove_modifier(Modifier::ITALIC),
@@ -211,8 +215,7 @@ fn apply_ansi_sgr(mut style: Style, code: u8) -> Style {
         35 => style.fg(Color::Magenta),
         36 => style.fg(Color::Cyan),
         37 => style.fg(Color::Gray),
-        38 => unimplemented!(),
-        39 => {
+        38 | 39 => {
             style.fg = None;
             style
         }
@@ -233,8 +236,7 @@ fn apply_ansi_sgr(mut style: Style, code: u8) -> Style {
         45 => style.bg(Color::Magenta),
         46 => style.bg(Color::Cyan),
         47 => style.bg(Color::Gray),
-        48 => unimplemented!(),
-        49 => {
+        48 | 49 => {
             style.bg = None;
             style
         }

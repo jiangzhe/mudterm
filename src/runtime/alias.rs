@@ -1,8 +1,7 @@
 use crate::error::Result;
+use crate::runtime::model::{Model, ModelExec, ModelStore};
 use crate::runtime::{Pattern, Scripts, Target};
 use serde::{Deserialize, Serialize};
-use crate::runtime::model::{Model, ModelExec, ModelStore};
-
 
 pub type Aliases = ModelStore<AliasModel>;
 
@@ -37,7 +36,6 @@ impl Default for AliasModel {
 }
 
 impl Model for AliasModel {
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -63,7 +61,6 @@ impl Model for AliasModel {
             super::compile_scripts(&self.pattern, &self.scripts, self.regexp, 1)?;
         Ok(Alias::new(self, pattern, scripts))
     }
-
 }
 
 impl AliasModel {

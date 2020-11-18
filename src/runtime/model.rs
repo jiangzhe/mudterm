@@ -1,7 +1,6 @@
-use crate::runtime::{Pattern, Scripts, Target};
 use crate::error::{Error, Result};
+use crate::runtime::{Pattern, Scripts, Target};
 use std::borrow::Cow;
-
 
 /// 对原模型的抽象
 pub trait Model: Sized {
@@ -18,20 +17,24 @@ pub trait Model: Sized {
     fn compile(self) -> Result<ModelExec<Self>>;
 }
 
-#[derive(Debug)]
 /// 抽象对正则与脚本的编译
+#[derive(Debug, Clone)]
 pub struct ModelExec<M> {
     pub model: M,
     pattern: Pattern,
     scripts: Scripts,
 }
 
-impl<M> ModelExec<M> 
-where 
+impl<M> ModelExec<M>
+where
     M: Model,
 {
     pub fn new(model: M, pattern: Pattern, scripts: Scripts) -> Self {
-        Self{model, pattern, scripts}
+        Self {
+            model,
+            pattern,
+            scripts,
+        }
     }
 
     pub fn is_match(&self, input: &str) -> bool {
@@ -43,25 +46,20 @@ where
     }
 }
 
-
 #[derive(Debug)]
 pub struct ModelStore<T> {
     arr: Vec<T>,
 }
 
-impl<M> ModelStore<ModelExec<M>> 
+impl<M> ModelStore<ModelExec<M>>
 where
     M: Model,
 {
-
     pub fn new() -> Self {
-        Self{
-            arr: Vec::new(),
-        }
+        Self { arr: Vec::new() }
     }
 
-    pub fn add(&mut self, model: M) -> Result<()> {
-        let me = model.compile()?;
+    pub fn add(&mut self, me: ModelExec<M>) -> Result<()> {
         let idx = if me.model.name().is_empty() {
             None
         } else {
@@ -69,7 +67,11 @@ where
         };
         match idx {
             None => self.arr.push(me),
-            Some(_) => return Err(Error::RuntimeError("A trigger of that name already exists".to_owned())),
+            Some(_) => {
+                return Err(Error::RuntimeError(
+                    "A trigger of that name already exists".to_owned(),
+                ))
+            }
         }
         Ok(())
     }
@@ -95,7 +97,7 @@ where
             Some(me) => {
                 me.model.set_enabled(enabled);
                 Some(me)
-            } 
+            }
         }
     }
 
@@ -114,13 +116,20 @@ where
         n
     }
 
-    #[inline]
-    fn get(&self, name: impl AsRef<str>) -> Option<&ModelExec<M>> {
+    pub fn get(&self, name: impl AsRef<str>) -> Option<&ModelExec<M>> {
         let name = name.as_ref();
         if name.is_empty() {
             return None;
         }
         self.arr.iter().find(|me| me.model.name() == name)
+    }
+
+    pub fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut ModelExec<M>> {
+        let name = name.as_ref();
+        if name.is_empty() {
+            return None;
+        }
+        self.arr.iter_mut().find(|me| me.model.name() == name)
     }
 
     #[inline]
@@ -130,14 +139,5 @@ where
             return None;
         }
         self.arr.iter().position(|me| me.model.name() == name)
-    }
-
-    #[inline]
-    fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut ModelExec<M>> {
-        let name = name.as_ref();
-        if name.is_empty() {
-            return None;
-        }
-        self.arr.iter_mut().find(|me| me.model.name() == name)
     }
 }

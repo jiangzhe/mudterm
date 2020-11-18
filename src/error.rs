@@ -5,7 +5,7 @@ pub enum Error {
     #[error("Connection error {0}")]
     ConnectionError(#[from] std::io::Error),
     #[error("Lua error {0}")]
-    LuaError(#[from] rlua::Error),
+    LuaError(#[from] mlua::Error),
     #[error("Receive error {0}")]
     RecvError(#[from] crossbeam_channel::RecvError),
     #[error("Send error {0}")]

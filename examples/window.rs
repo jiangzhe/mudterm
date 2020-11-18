@@ -111,16 +111,16 @@ fn run6() -> Result<()> {
         height: 4,
     };
     let mut flow = Flow::new(flowarea, 5000, true);
-    flow.push_line(RawLine::owned("静言\r\n"));
-    flow.push_line(RawLine::owned("┌───基本知识\r\n"));
-    flow.push_line(RawLine::owned("│ 读书\r\n"));
-    flow.push_line(RawLine::owned("│ 叫化\r\n"));
+    flow.push_line(RawLine::new("静言\r\n"));
+    flow.push_line(RawLine::new("┌───基本知识\r\n"));
+    flow.push_line(RawLine::new("│ 读书\r\n"));
+    flow.push_line(RawLine::new("│ 叫化\r\n"));
     terminal.render_widget(&mut flow, flowarea)?;
     terminal.flush(vec![flowarea])?;
     let mut keys = stdin.keys();
     keys.next().unwrap();
 
-    flow.push_line(RawLine::owned("│ 道听\r\n"));
+    flow.push_line(RawLine::new("│ 道听\r\n"));
     terminal.render_widget(&mut flow, flowarea)?;
     terminal.flush(vec![flowarea])?;
     keys.next().unwrap();
@@ -154,7 +154,7 @@ fn run5() -> Result<()> {
     for line in s.split('\n') {
         let mut line = line.to_owned();
         line.push('\n');
-        flow.push_line(RawLine::owned(line));
+        flow.push_line(RawLine::new(line));
     }
 
     terminal.render_widget(&mut flow, flowarea)?;
@@ -169,7 +169,7 @@ fn run5() -> Result<()> {
                 let mut cmd = String::new();
                 cmd.push(c);
                 cmd.push_str("\r\n");
-                flow.push_line(RawLine::raw(cmd));
+                flow.push_line(RawLine::fmt_raw(cmd));
             }
             Key::Left => write!(terminal, "{}", termion::cursor::Left(1))?,
             _ => (),

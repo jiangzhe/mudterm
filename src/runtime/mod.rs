@@ -1,19 +1,19 @@
 pub mod alias;
+pub mod model;
 pub mod sub;
 pub mod timer;
 pub mod trigger;
-pub mod model;
 
 use crate::codec::{Codec, MudCodec};
 use crate::conf;
 use crate::error::{Error, Result};
 use crate::event::{Event, EventQueue, NextStep, RuntimeEvent, RuntimeEventHandler};
 use crate::ui::line::RawLine;
-// use crate::ui::ansi::SpanStream;
+use crate::ui::style::{Color, Style};
 use alias::Alias;
 use crossbeam_channel::Sender;
+use mlua::Lua;
 use regex::Regex;
-use rlua::Lua;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::borrow::Cow;
@@ -24,6 +24,8 @@ use std::io::Write;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use sub::{Sub, SubParser};
+use trigger::{Trigger, Triggers};
+use uuid::Uuid;
 
 /// 脚本环境中的变量存储和查询
 #[derive(Debug, Clone)]
@@ -63,6 +65,7 @@ pub struct Runtime {
     send_empty_cmd: bool,
     cmd_nr: usize,
     logger: Option<File>,
+    triggers: Triggers,
 }
 
 impl Runtime {
@@ -80,6 +83,7 @@ impl Runtime {
             send_empty_cmd: config.term.send_empty_cmd,
             cmd_nr: 0,
             logger: None,
+            triggers: Triggers::new(),
         }
     }
 
@@ -89,11 +93,8 @@ impl Runtime {
 
     pub fn exec<T: AsRef<[u8]>>(&self, input: T) -> Result<()> {
         let input = input.as_ref();
-        let output = self.lua.context::<_, rlua::Result<()>>(move |lua_ctx| {
-            let rst = lua_ctx.load(input).exec()?;
-            Ok(rst)
-        })?;
-        Ok(output)
+        let output = self.lua.load(input).exec()?;
+        Ok(())
     }
 
     pub fn preprocess_user_cmd(&mut self, mut cmd: String) {
@@ -110,14 +111,14 @@ impl Runtime {
                     self.cmd_nr += 1;
                     if self.echo_cmd && self.cmd_nr > 2 {
                         // self.queue.push_styled_line(StyledLine::raw(cmd.to_owned()));
-                        self.queue.push_line(RawLine::raw(&cmd));
+                        self.queue.push_line(RawLine::fmt_raw(&cmd));
                     }
                     self.queue.push_cmd(cmd);
                 }
                 Target::Script => {
                     if let Err(e) = self.exec(cmd) {
                         let err = format_err(e.to_string());
-                        self.queue.push_line(RawLine::err(err));
+                        self.queue.push_line(RawLine::fmt_err(err));
                     }
                 }
             }
@@ -127,7 +128,7 @@ impl Runtime {
     pub fn process_user_scripts(&mut self, scripts: String) {
         if let Err(e) = self.exec(&scripts) {
             let err = format_err(e.to_string());
-            self.queue.push_line(RawLine::err(err));
+            self.queue.push_line(RawLine::fmt_err(err));
         }
     }
 
@@ -155,12 +156,12 @@ impl Runtime {
         let mut start = 0usize;
         while let Some(end) = s.as_ref()[start..].find('\n') {
             let end = start + end;
-            let line = RawLine::borrowed(s.clone(), start, end + 1);
+            let line = RawLine::new(s[start..end + 1].to_owned());
             lines.push(line);
             start = end + 1;
         }
         if start < s.as_ref().len() {
-            let line = RawLine::borrowed(s.clone(), start, s.as_ref().len());
+            let line = RawLine::new(s.as_ref()[start..].to_owned());
             lines.push(line);
         }
         // send to global event bus
@@ -184,58 +185,87 @@ impl Runtime {
     }
 
     pub fn init(&self) -> Result<()> {
-        self.lua.context::<_, rlua::Result<()>>(|lua_ctx| {
-            let globals = lua_ctx.globals();
+        let globals = self.lua.globals();
 
-            // 初始化SetVariable函数
-            let vars = self.vars.clone();
-            let set_variable = lua_ctx.create_function(move |_, (k, v): (String, String)| {
+        // 初始化SetVariable函数
+        let vars = self.vars.clone();
+        let set_variable = self
+            .lua
+            .create_function(move |_, (k, v): (String, String)| {
+                log::trace!("SetVariable function called");
                 vars.insert(k, v);
                 Ok(())
             })?;
-            globals.set("SetVariable", set_variable)?;
+        globals.set("SetVariable", set_variable)?;
 
-            // 初始化GetVariable函数
-            let vars = self.vars.clone();
-            let get_variable = lua_ctx.create_function(move |_, k: String| match vars.get(&k) {
+        // 初始化GetVariable函数
+        let vars = self.vars.clone();
+        let get_variable = self.lua.create_function(move |_, k: String| {
+            log::trace!("GetVariable function called");
+            match vars.get(&k) {
                 Some(v) => Ok(Some(v.to_owned())),
                 None => Ok(None),
-            })?;
-            globals.set("GetVariable", get_variable)?;
+            }
+        })?;
+        globals.set("GetVariable", get_variable)?;
 
-            // 初始化SwitchCodec函数
-            let queue = self.queue.clone();
-            let switch_codec = lua_ctx.create_function(move |_, code: String| {
-                let new_code = match &code.to_lowercase()[..] {
-                    "gbk" => Codec::Gb18030,
-                    "utf8" | "utf-8" => Codec::Utf8,
-                    "big5" => Codec::Big5,
-                    _ => return Ok(()),
-                };
-                queue.push(RuntimeEvent::SwitchCodec(new_code));
-                Ok(())
-            })?;
-            globals.set("SwitchCodec", switch_codec)?;
-
-            // 初始化Send函数
-            let queue = self.queue.clone();
-            let send = lua_ctx.create_function(move |_, s: String| {
-                log::trace!("Send function called");
-                queue.push_cmd(s);
-                Ok(())
-            })?;
-            globals.set("Send", send)?;
-
-            // 初始化Note函数
-            let queue = self.queue.clone();
-            let note = lua_ctx.create_function(move |_, s: String| {
-                log::trace!("Note function called");
-                queue.push_line(RawLine::note(s));
-                Ok(())
-            })?;
-            globals.set("Note", note)?;
+        // 初始化SwitchCodec函数
+        let queue = self.queue.clone();
+        let switch_codec = self.lua.create_function(move |_, code: String| {
+            log::trace!("SwitchCodec function called");
+            let new_code = match &code.to_lowercase()[..] {
+                "gbk" => Codec::Gb18030,
+                "utf8" | "utf-8" => Codec::Utf8,
+                "big5" => Codec::Big5,
+                _ => return Ok(()),
+            };
+            queue.push(RuntimeEvent::SwitchCodec(new_code));
             Ok(())
         })?;
+        globals.set("SwitchCodec", switch_codec)?;
+
+        // 重写print函数
+        let print = self.lua.create_function(move |_, s: ()| Ok(()))?;
+        globals.set("print", print)?;
+
+        // 初始化Send函数
+        let queue = self.queue.clone();
+        let send = self.lua.create_function(move |_, s: String| {
+            log::trace!("Send function called");
+            queue.push_cmd(s);
+            Ok(())
+        })?;
+        globals.set("Send", send)?;
+
+        // 初始化Note函数
+        let queue = self.queue.clone();
+        let note = self.lua.create_function(move |_, s: String| {
+            log::trace!("Note function called");
+            queue.push_line(RawLine::fmt_note(s));
+            Ok(())
+        })?;
+        globals.set("Note", note)?;
+
+        // 初始化ColourNote函数
+        let queue = self.queue.clone();
+        let colour_note =
+            self.lua
+                .create_function(move |_, (fg, bg, text): (String, String, String)| {
+                    log::trace!("ColourNote function called");
+                    let style = Style::default()
+                        .fg(Color::from_str_or_default(fg, Color::Reset))
+                        .bg(Color::from_str_or_default(bg, Color::Reset));
+                    queue.push_line(RawLine::fmt(text, style));
+                    Ok(())
+                })?;
+        globals.set("ColourNote", colour_note)?;
+
+        let get_unique_id = self.lua.create_function(move |_, _: ()| {
+            let id = Uuid::new_v4();
+            Ok(id.to_simple().to_string())
+        })?;
+        globals.set("GetUniqueID", get_unique_id)?;
+        // todo: 初始化AddTrigger函数
         Ok(())
     }
 }
@@ -311,7 +341,9 @@ fn compile_scripts(
     match_lines: usize,
 ) -> Result<(Pattern, Scripts)> {
     if pattern.is_empty() {
-        return Err(Error::RuntimeError("The match_text cannot be empty".to_owned()));
+        return Err(Error::RuntimeError(
+            "The match_text cannot be empty".to_owned(),
+        ));
     }
     if regexp {
         // handle multi-line
@@ -398,7 +430,9 @@ pub fn translate_cmds(
         } else if let Some(alias) = match_aliases(&raw_line, aliases) {
             log::debug!(
                 "alias[{}/{}: {}] matched",
-                alias.model.group, alias.model.name, alias.model.pattern
+                alias.model.group,
+                alias.model.name,
+                alias.model.pattern
             );
             cmds.push((alias.model.target, alias.model.scripts.clone()))
         } else {

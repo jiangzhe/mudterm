@@ -88,7 +88,7 @@ fn decode_lines(src: &[u8]) -> Result<Vec<RawLine>> {
         let len = cursor.read_u32::<LE>()?;
         let mut content = vec![0u8; len as usize];
         cursor.read_exact(&mut content[..])?;
-        lines.push(RawLine::owned(String::from_utf8(content)?));
+        lines.push(RawLine::new(String::from_utf8(content)?));
     }
     Ok(lines)
 }

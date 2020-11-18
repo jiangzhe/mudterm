@@ -12,6 +12,7 @@ pub struct Flow {
     max_lines: usize,
     raw: VecDeque<RawLine>,
     display: VecDeque<WrapLine>,
+    // todo: 采用多parser处理不同来源的消息
     parser: AnsiParser,
     cjk: bool,
 }
@@ -29,7 +30,7 @@ impl Flow {
         };
 
         for _ in 0..area.height {
-            flow.push_line(RawLine::owned("\r\n".to_owned()));
+            flow.push_line(RawLine::new("\r\n".to_owned()));
         }
 
         flow
@@ -99,6 +100,7 @@ fn parse_ansi_line(
     cjk: bool,
     height: usize,
 ) {
+    log::debug!("line={}", line.as_ref());
     parser.fill(line.as_ref());
     while let Some(span) = parser.next_span() {
         if let Some(last_line) = display.back_mut() {
