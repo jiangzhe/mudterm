@@ -1,9 +1,10 @@
 use crate::auth;
 use crate::error::Result;
-use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, RuntimeEventHandler};
+use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::protocol::Packet;
-use crate::runtime::Runtime;
+use crate::runtime::{Runtime, RuntimeOutput, RuntimeOutputHandler};
 use crate::transport::{Outbound, Telnet, TelnetEvent};
+use crate::ui::UserOutput;
 use crate::ui::line::RawLines;
 use crossbeam_channel::{unbounded, Sender};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -121,7 +122,7 @@ fn start_from_client_handle(mut conn: TcpStream, evttx: Sender<Event>) {
                 break;
             }
             Ok(Packet::Text(s)) => {
-                evttx.send(Event::UserInputLine(s)).unwrap();
+                evttx.send(Event::UserOutput(UserOutput::Cmd(s))).unwrap();
             }
             Ok(other) => {
                 log::warn!("received unexpected packet from client {:?}", other);
@@ -196,8 +197,8 @@ impl EventHandler for Server {
             Event::WorldLines(lines) => {
                 rt.process_world_lines(lines);
             }
-            Event::UserInputLine(cmd) => {
-                rt.preprocess_user_cmd(cmd);
+            Event::UserOutput(output) => {
+                rt.process_user_output(output);
             }
             Event::Tick => {
                 // todo: implements trigger by tick
@@ -211,27 +212,23 @@ impl EventHandler for Server {
             | Event::TerminalKey(_)
             | Event::TerminalMouse(_)
             | Event::WindowResize
-            | Event::UserScriptLine(_)
             | Event::ServerDown => unreachable!("standalone mode does not support event {:?}", evt),
         }
         Ok(NextStep::Run)
     }
 }
 
-impl RuntimeEventHandler for Server {
-    fn on_runtime_event(&mut self, evt: RuntimeEvent, rt: &mut Runtime) -> Result<NextStep> {
-        match evt {
-            RuntimeEvent::SwitchCodec(code) => {
-                rt.mud_codec.switch_codec(code);
-            }
-            RuntimeEvent::StringToMud(mut s) => {
+impl RuntimeOutputHandler for Server {
+    fn on_runtime_output(&mut self, output: RuntimeOutput, rt: &mut Runtime) -> Result<NextStep> {
+        match output {
+            RuntimeOutput::ToServer(mut s) => {
                 if !s.ends_with('\n') {
                     s.push('\n');
                 }
-                let bs = rt.mud_codec.encode(&s)?;
+                let bs = rt.encode(&s)?;
                 self.worldtx.send(bs)?;
             }
-            RuntimeEvent::DisplayLines(lines) => {
+            RuntimeOutput::ToUI(lines) => {
                 if let Some((clitx, _)) = self.to_cli.as_mut() {
                     let lines = lines.into_vec();
                     if let Err(e) = clitx.send(Packet::Lines(lines)) {
@@ -239,6 +236,7 @@ impl RuntimeEventHandler for Server {
                     }
                 }
             }
+            RuntimeOutput::ImmediateAction(action) => unreachable!("action '{:?}' should not be passed to server handler", action),
         }
         Ok(NextStep::Run)
     }

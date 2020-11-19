@@ -3,12 +3,14 @@ pub mod model;
 pub mod sub;
 pub mod timer;
 pub mod trigger;
+pub mod queue;
 
 use crate::codec::{Codec, MudCodec};
 use crate::conf;
 use crate::error::{Error, Result};
-use crate::event::{Event, EventQueue, NextStep, RuntimeEvent, RuntimeEventHandler};
-use crate::ui::line::RawLine;
+use crate::event::{Event, NextStep};
+use crate::ui::UserOutput;
+use crate::ui::line::{RawLine, RawLines};
 use crate::ui::style::{Color, Style};
 use crossbeam_channel::Sender;
 use mlua::Lua;
@@ -22,8 +24,36 @@ use std::io::Write;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use sub::{Sub, SubParser};
-use alias::{Aliases, Alias};
+use alias::{Alias, Aliases, AliasModel, AliasFlags};
+use queue::OutputQueue;
 use uuid::Uuid;
+
+/// 运行时事件，进由运行时进行处理
+///
+/// 这些事件是由外部事件派生或由脚本运行生成出来
+#[derive(Debug, Clone, PartialEq)]
+pub enum  RuntimeOutput {
+    /// switch codec for both encoding and decoding
+    // SwitchCodec(Codec),
+    /// string which is to be sent to server
+    ToServer(String),
+    /// lines from server or script to display
+    ToUI(RawLines),
+    /// 运行时操作
+    ImmediateAction(RuntimeAction),
+}
+
+/// 运行时事件回调
+pub trait RuntimeOutputHandler {
+    fn on_runtime_output(&mut self, evt: RuntimeOutput, rt: &mut Runtime) -> Result<NextStep>;
+}
+
+/// 运行时操作
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuntimeAction {
+    SwitchCodec(Codec),
+    CreateAlias(Alias),
+}
 
 /// 脚本环境中的变量存储和查询
 #[derive(Debug, Clone)]
@@ -49,8 +79,11 @@ impl Variables {
     }
 }
 
+// 别名回调存储于Lua脚本引擎的全局变量表中
 const GLOBAL_ALIAS_CALLBACKS: &str = "_global_alias_callbacks";
+// 触发器回调存储于Lua脚本引擎的全局变量表中
 const GLOBAL_TRIGGER_CALLBACKS: &str = "_global_trigger_callbacks";
+// 计时器回调存储于Lua脚本引擎的全局变量表中
 const GLOBAL_TIMER_CALLBACKS: &str = "_global_timer_callbacks";
 
 /// 运行时保存别名，定时器，触发器，以及脚本引擎
@@ -59,13 +92,11 @@ pub struct Runtime {
     pub(crate) evttx: Sender<Event>,
     lua: Lua,
     // 允许外部直接调用queue的公共方法
-    pub(crate) queue: EventQueue,
+    queue: OutputQueue,
     vars: Variables,
-    pub(crate) mud_codec: MudCodec,
-    echo_cmd: bool,
+    mud_codec: MudCodec,
     cmd_delim: char,
     send_empty_cmd: bool,
-    cmd_nr: usize,
     logger: Option<File>,
     // triggers: Triggers,
     aliases: Aliases,
@@ -76,15 +107,13 @@ impl Runtime {
         Self {
             evttx,
             lua: Lua::new(),
-            queue: EventQueue::new(),
+            queue: OutputQueue::new(),
             vars: Variables::new(),
             mud_codec: MudCodec::new(),
             // local buffer for triggers
             // buffer: RawLineBuffer::with_capacity(10),
-            echo_cmd: config.term.echo_cmd,
             cmd_delim: config.term.cmd_delim,
             send_empty_cmd: config.term.send_empty_cmd,
-            cmd_nr: 0,
             logger: None,
             // triggers: Triggers::new(),
             aliases: Aliases::new(),
@@ -95,33 +124,56 @@ impl Runtime {
         self.logger = Some(logger);
     }
 
+    pub fn push_line_to_ui(&mut self, line: RawLine) {
+        self.queue.push_line(line);
+    }
+
+    /// 将UTF-8字符串编码为MUD服务器编码（如GBK，Big5或仍然为UTF-8）
+    pub fn encode(&mut self, s: impl AsRef<str>) -> Result<Vec<u8>> {
+        self.mud_codec.encode(s.as_ref())
+    }
+
+    /// 执行任意脚本，用户可通过UI界面直接输入脚本
     pub fn exec_script(&self, input: impl AsRef<[u8]>) -> Result<()> {
         let input = input.as_ref();
         self.lua.load(input).exec()?;
         Ok(())
     }
 
+    /// 执行别名回调
     pub fn exec_alias(&self, name: String, text: String) -> Result<()> {
         let alias = self.aliases.get(&name)
             .ok_or_else(|| Error::RuntimeError(format!("alias '{}' mismatch with text '{}'", &name, &text)))?;
         let wildcards = alias.captures(&text)?;
         let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_ALIAS_CALLBACKS)?;
-        let function: mlua::Function = callbacks.get(&alias.model.name[..])?;
-        function.call((name, text, wildcards))?;
+        let func: mlua::Function = callbacks.get(&alias.model.name[..])?;
+        func.call((name, text, wildcards))?;
         Ok(())
     }
 
-    pub fn preprocess_user_cmd(&mut self, mut cmd: String) {
+    /// 创建别名
+    pub fn create_alias(&mut self, alias: Alias) -> Result<()> {
+        self.aliases.add(alias)
+    }
+
+    pub fn process_user_output(&mut self, output: UserOutput) {
+        match output {
+            UserOutput::Script(script) => self.process_user_script(script),
+            UserOutput::Cmd(cmd) => self.process_user_cmd(cmd),
+        }
+    }
+
+    fn process_user_cmd(&mut self, mut cmd: String) {
         // todo: might be other built-in command
         if cmd.ends_with("\r\n") {
             cmd.truncate(cmd.len() - 2);
         } else if cmd.ends_with('\n') {
-            cmd.truncate(cmd.len() - 1)
+            cmd.truncate(cmd.len() - 1);
         }
         let cmds = self.translate_cmds(cmd, self.cmd_delim, self.send_empty_cmd);
         if cmds.is_empty() {
             // 对于空字符，推送空行
-            self.queue.push_cmd(String::new());
+            self.queue.push_cmd("\n".to_owned());
             return;
         }
         for cmd in cmds {
@@ -142,8 +194,8 @@ impl Runtime {
         }
     }
 
-    pub fn process_user_scripts(&mut self, scripts: String) {
-        if let Err(e) = self.exec_script(&scripts) {
+    fn process_user_script(&mut self, script: String) {
+        if let Err(e) = self.exec_script(&script) {
             let err = format_err(e.to_string());
             self.queue.push_line(RawLine::fmt_err(err));
         }
@@ -186,21 +238,73 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn process_runtime_events<H: RuntimeEventHandler>(
-        &mut self,
-        handler: &mut H,
-    ) -> Result<NextStep> {
-        let evts = self.queue.drain_all();
-        for evt in evts {
-            match handler.on_runtime_event(evt, self)? {
-                NextStep::Quit => return Ok(NextStep::Quit),
-                NextStep::Skip => return Ok(NextStep::Skip),
-                _ => (),
+    pub fn process_queue(&mut self) -> Vec<RuntimeOutput> {
+        let queued = self.queue.drain_all();
+        for output in queued {
+            match output {
+                RuntimeOutput::ImmediateAction(action) => self.process_runtime_action(action),
+                other => self.queue.push(other),
             }
         }
-        Ok(NextStep::Run)
+        self.queue.drain_all()
     }
 
+    pub fn process_runtime_action(&mut self, action: RuntimeAction) {
+        match action {
+            RuntimeAction::SwitchCodec(code) => {
+                self.mud_codec.switch_codec(code);
+            }
+            RuntimeAction::CreateAlias(alias) => {
+                // todo: should be executed before IO queue
+            }
+        }
+    }
+
+    fn translate_cmds(
+        &self,
+        cmd: String,
+        delim: char,
+        send_empty_cmd: bool,
+    ) -> Vec<PostCmd> {
+        if cmd.is_empty() {
+            return vec![];
+        }
+        let raw_lines: Vec<String> = cmd
+            .split(|c| c == '\n' || c == delim)
+            .filter(|s| send_empty_cmd || !s.is_empty())
+            .map(|s| s.to_owned())
+            .collect();
+        let mut cmds = Vec::new();
+        for raw_line in raw_lines {
+            if raw_line.is_empty() {
+                // send empty line directly, maybe filtered before this action
+                cmds.push(PostCmd::Raw(raw_line));
+            } else if let Some(alias) = match_aliases(&raw_line, self.aliases.as_ref()) {
+                log::debug!(
+                    "alias[{}/{}: {}] matched",
+                    alias.model.group,
+                    alias.model.name,
+                    alias.model.pattern
+                );
+                cmds.push(PostCmd::Alias{
+                    name: alias.model.name.clone(),
+                    text: raw_line,
+                })
+            } else {
+                cmds.push(PostCmd::Raw(raw_line));
+            }
+        }
+        cmds
+    }
+
+    /// 初始化运行时
+    /// 
+    /// 1. 定义全局变量表，Lua脚本通过SetVariable()和GetVariable()函数
+    ///    对其中的值进行设置和查询
+    /// 2. 定义Lua脚本引擎中的的核心函数
+    ///    有一部分函数借鉴了MUSHClient的函数签名。
+    ///    输入输出函数：Send()，Note()和ColourNote()。
+    ///    别名相关函数：CreateAlias(), DeleteAlias(), EnableAlias(), DisableAlias()。
     pub fn init(&self) -> Result<()> {
         let globals = self.lua.globals();
 
@@ -236,7 +340,7 @@ impl Runtime {
                 "big5" => Codec::Big5,
                 _ => return Ok(()),
             };
-            queue.push(RuntimeEvent::SwitchCodec(new_code));
+            queue.push(RuntimeOutput::ImmediateAction(RuntimeAction::SwitchCodec(new_code)));
             Ok(())
         })?;
         globals.set("SwitchCodec", switch_codec)?;
@@ -277,50 +381,39 @@ impl Runtime {
                 })?;
         globals.set("ColourNote", colour_note)?;
 
+        // 初始化GetUniqueID函数
         let get_unique_id = self.lua.create_function(move |_, _: ()| {
             let id = Uuid::new_v4();
             Ok(id.to_simple().to_string())
         })?;
         globals.set("GetUniqueID", get_unique_id)?;
-        // todo: 初始化AddTrigger函数
-        Ok(())
-    }
-
-    pub fn translate_cmds(
-        &self,
-        cmd: String,
-        delim: char,
-        send_empty_cmd: bool,
-    ) -> Vec<PostCmd> {
-        if cmd.is_empty() {
-            return vec![];
-        }
-        let raw_lines: Vec<String> = cmd
-            .split(|c| c == '\n' || c == delim)
-            .filter(|s| send_empty_cmd || !s.is_empty())
-            .map(|s| s.to_owned())
-            .collect();
-        let mut cmds = Vec::new();
-        for raw_line in raw_lines {
-            if raw_line.is_empty() {
-                // send empty line directly, maybe filtered before this action
-                cmds.push(PostCmd::Raw(raw_line));
-            } else if let Some(alias) = match_aliases(&raw_line, self.aliases.as_ref()) {
-                log::debug!(
-                    "alias[{}/{}: {}] matched",
-                    alias.model.group,
-                    alias.model.name,
-                    alias.model.pattern
-                );
-                cmds.push(PostCmd::Alias{
-                    name: alias.model.name.clone(),
-                    text: raw_line,
-                })
-            } else {
-                cmds.push(PostCmd::Raw(raw_line));
+        
+        // 初始化CreateAlias函数
+        let queue = self.queue.clone();
+        let create_alias = self.lua.create_function(move |lua, (name, group, pattern, func, flags): (String, String, String, mlua::Function, u16)| {
+            if pattern.is_empty() {
+                return Err(mlua::Error::external(Error::RuntimeError("empty pattern not allowed when creating alias".to_owned())));
             }
-        }
-        cmds
+            let flags = AliasFlags::from_bits(flags)
+                .ok_or_else(|| mlua::Error::external(Error::RuntimeError(format!("invalid alias flags {}", flags))))?;
+
+            let alias_callbacks: mlua::Table = lua.globals().get(GLOBAL_ALIAS_CALLBACKS)?;
+            if alias_callbacks.contains_key(name.to_owned())? {
+                return Err(mlua::Error::external(Error::RuntimeError(format!("alias callback '{}' already exists", &name))));
+            }
+            let model = AliasModel{name, group, pattern, extra: flags};
+            let alias = model.compile()
+                .map_err(|e| mlua::Error::external(e))?;
+            // 此处可以直接向Lua表中添加回调，因为：
+            // 1. mlua::Function与Lua运行时同生命周期，不能在EventQueue中传递
+            // 2. 需保证在下次检验名称时若重名则失败
+            // 重要：在处理RuntimAction时，需清理曾添加的回调函数
+            alias_callbacks.set(alias.model.name.to_owned(), func)?;
+            queue.push(RuntimeOutput::ImmediateAction(RuntimeAction::CreateAlias(alias)));
+            Ok(())
+        })?;
+        globals.set("CreateAlias", create_alias)?;
+        Ok(())
     }
 }
 
@@ -406,9 +499,57 @@ pub enum PostCmd {
 
 fn match_aliases<'a>(input: &str, aliases: &'a [Alias]) -> Option<&'a Alias> {
     for alias in aliases {
-        if alias.model.enabled && alias.is_match(&input) {
+        if alias.model.enabled() && alias.is_match(&input) {
             return Some(alias);
         }
     }
     None
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossbeam_channel::{Receiver, unbounded};
+
+    #[test]
+    fn test_process_single_user_cmd() {
+        let (mut rt, _) = new_runtime().unwrap();
+        rt.process_user_output(UserOutput::Cmd("hp".to_owned()));
+        assert_eq!(1, rt.queue.len());
+        let evt = rt.queue.drain_all().pop().unwrap();
+        assert_eq_str("hp\n", evt);
+        rt.process_user_output(UserOutput::Cmd("hp\nsay hi".to_owned()));
+    }
+
+    #[test]
+    fn test_process_multi_user_cmds() {
+        let (mut rt, _) = new_runtime().unwrap();
+        rt.process_user_output(UserOutput::Cmd("hp;say hi".to_owned()));
+        assert_eq!(1, rt.queue.len());
+        let mut evts = rt.queue.drain_all();
+        assert_eq_str("hp\nsay hi\n", evts.pop().unwrap());
+
+        rt.process_user_output(UserOutput::Cmd("hp\nsay hi".to_owned()));
+        assert_eq!(1, rt.queue.len());
+        let mut evts = rt.queue.drain_all();
+        assert_eq_str("hp\nsay hi\n", evts.pop().unwrap());
+    }
+
+    #[test]
+    fn test_process_single_alias() {
+        let (mut rt, _) = new_runtime().unwrap();
+    }
+
+    fn assert_eq_str(expect: impl AsRef<str>, actual: RuntimeOutput) {
+        let expect = RuntimeOutput::ToServer(expect.as_ref().to_owned());
+        assert_eq!(expect, actual);
+    }
+
+    fn new_runtime() -> Result<(Runtime, Receiver<Event>)> {
+        let (evttx, evtrx) = unbounded();
+        let rt = Runtime::new(evttx, &conf::Config::default());
+        rt.init()?;
+        Ok((rt, evtrx))
+    }
 }

@@ -120,14 +120,11 @@ mod tests {
     }
 
     #[test]
-    fn test_incomplete_ansi_sequence() {
+    fn test_gb18030() {
         let mut mc = MudCodec::new();
-        mc.switch_codec(Codec::Utf8);
-        let bs = b"hello\x21[37;".to_vec();
+        mc.switch_codec(Codec::Gb18030);
+        let bs = b"\xc4\xe3\xcf\xd6\xd4\xda\xb2\xbb\xc3\xa6\x0a".to_vec();
         let s = mc.decode(&bs);
-        assert_eq!(&s[..], "hello");
-        let bs = b"1mworld".to_vec();
-        let s = mc.decode(&bs);
-        assert_eq!(&s[..], "\x21[37;1mworld");
+        assert_eq!(&s[..], "你现在不忙\n");
     }
 }

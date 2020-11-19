@@ -1,5 +1,6 @@
 use crate::ui::line::Line;
 use crate::ui::span::Span;
+use crate::ui::UserOutput;
 use unicode_width::UnicodeWidthChar;
 
 pub trait DisplayWidthMaybeZero {
@@ -69,6 +70,15 @@ impl AppendWidthTab8 for Vec<Span> {
 impl AppendWidthTab8 for Line {
     fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
         self.spans.append_width(prev_width, cjk)
+    }
+}
+
+impl AppendWidthTab8 for UserOutput {
+    fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
+        match self {
+            Self::Cmd(s) => s.append_width(prev_width, cjk),
+            Self::Script(s) => s.append_width(prev_width, cjk),
+        }
     }
 }
 

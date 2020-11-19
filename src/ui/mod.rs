@@ -17,12 +17,72 @@ use crossbeam_channel::Sender;
 use layout::Rect;
 use line::RawLine;
 use termion::event::{Key, MouseEvent};
-use widget::{CmdBar, Flow, Output, Widget};
+use widget::{CmdBar, Flow, Widget};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum UserOutput {
+    Cmd(String),
+    Script(String),
+}
+
+impl Default for UserOutput {
+    fn default() -> Self {
+        Self::Cmd(String::new())
+    }
+}
+
+impl AsRef<str> for UserOutput {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Cmd(s) => s,
+            Self::Script(s) => s,
+        }
+    }
+}
+
+impl UserOutput {
+    pub fn push(&mut self, c: char) {
+        match self {
+            Self::Cmd(s) => s.push(c),
+            Self::Script(s) => s.push(c),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Cmd(s) => s.is_empty(),
+            Self::Script(s) => s.is_empty(),
+        }
+    }
+
+    pub fn is_cmd(&self) -> bool {
+        match self {
+            Self::Cmd(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_script(&self) -> bool {
+        match self {
+            Self::Script(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn pop(&mut self) -> Option<char> {
+        match self {
+            Self::Cmd(s) => s.pop(),
+            Self::Script(s) => s.pop(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = UserOutput::default();
+    }
+}
 
 pub trait UICallback {
-    fn on_cmd(&mut self, cmd: String);
-
-    fn on_script(&mut self, script: String);
+    fn on_output(&mut self, output: UserOutput);
 
     fn on_quit(&mut self);
 }
@@ -30,12 +90,8 @@ pub trait UICallback {
 pub struct EventBusCallback(Sender<Event>);
 
 impl UICallback for EventBusCallback {
-    fn on_cmd(&mut self, cmd: String) {
-        self.0.send(Event::UserInputLine(cmd)).unwrap()
-    }
-
-    fn on_script(&mut self, script: String) {
-        self.0.send(Event::UserScriptLine(script)).unwrap();
+    fn on_output(&mut self, output: UserOutput) {
+        self.0.send(Event::UserOutput(output)).unwrap()
     }
 
     fn on_quit(&mut self) {
@@ -111,14 +167,7 @@ impl Screen<EventBusCallback> {
     pub fn process_event(&mut self, event: UIEvent) -> Result<bool> {
         match event {
             UIEvent::Key(key) => match key {
-                Key::Char('\n') => match self.cmdbar.take() {
-                    Output::Script(s) => {
-                        self.uicb.on_script(s);
-                    }
-                    Output::Cmd(s) => {
-                        self.uicb.on_cmd(s);
-                    }
-                },
+                Key::Char('\n') => self.uicb.on_output(self.cmdbar.take()),
                 Key::Char(c) => {
                     self.cmdbar.push_char(c);
                 }

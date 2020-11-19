@@ -3,17 +3,31 @@ use regex::Regex;
 use std::collections::HashMap;
 use mlua::ToLua;
 
-/// 对原模型的抽象
-pub trait Model: Sized {
-    fn name(&self) -> &str;
+#[derive(Debug, Clone, PartialEq)]
+pub struct Model<X> {
+    pub name: String,
+    pub group: String,
+    pub pattern: String,
+    pub extra: X,
+}
 
-    fn group(&self) -> &str;
+impl<X: std::fmt::Debug> Model<X> {
+
+    pub fn compile(self) -> Result<ModelExec<Self>> {
+        let re = Regex::new(&self.pattern)?;
+        Ok(ModelExec::new(self, re))
+    }
+}
+
+pub trait ModelExtra {
 
     fn enabled(&self) -> bool;
 
     fn set_enabled(&mut self, enabled: bool);
 
-    fn compile(self) -> Result<ModelExec<Self>>;
+    fn keep_evaluating(&self) -> bool;
+
+    fn set_keep_evaluating(&mut self, keep_evaluating: bool);
 }
 
 /// 抽象对正则与脚本的编译
@@ -23,11 +37,14 @@ pub struct ModelExec<M> {
     re: Regex,
 }
 
-impl<M> ModelExec<M>
-where
-    M: Model + std::fmt::Debug,
-{
-    pub fn new(model: M, re: Regex) -> Self {
+impl<M: PartialEq> PartialEq for ModelExec<M> {
+    fn eq(&self, other: &Self) -> bool {
+        self.model == other.model
+    }
+}
+
+impl<X: std::fmt::Debug> ModelExec<Model<X>> {
+    pub fn new(model: Model<X>, re: Regex) -> Self {
         Self {
             model,
             re,
@@ -74,8 +91,6 @@ impl NumberOrString {
     }
 }
 
-
-
 #[derive(Debug, Clone)]
 pub struct ModelCaptures(HashMap<NumberOrString, String>);
 
@@ -93,32 +108,33 @@ impl<'lua> ToLua<'lua> for ModelCaptures {
 }
 
 #[derive(Debug)]
-pub struct ModelStore<T> {
-    arr: Vec<T>,
+pub struct MapModelStore<M>(HashMap<String, M>);
+
+
+#[derive(Debug)]
+pub struct VecModelStore<ME> {
+    arr: Vec<ME>,
 }
 
-impl<T> AsRef<[T]> for ModelStore<T> {
+impl<X: ModelExtra> AsRef<[ModelExec<Model<X>>]> for VecModelStore<ModelExec<Model<X>>> {
 
-    fn as_ref(&self) -> &[T] {
+    fn as_ref(&self) -> &[ModelExec<Model<X>>] {
         self.arr.as_ref()
     }
 }
 
-impl<M> ModelStore<ModelExec<M>>
-where
-    M: Model,
-{
+impl<X: ModelExtra> VecModelStore<ModelExec<Model<X>>> {
     pub fn new() -> Self {
         Self { arr: Vec::new() }
     }
 
-    pub fn add(&mut self, me: ModelExec<M>) -> Result<()> {
-        let idx = if me.model.name().is_empty() {
+    pub fn add(&mut self, me: ModelExec<Model<X>>) -> Result<()> {
+        let opt = if me.model.name.is_empty() {
             None
         } else {
-            self.get(me.model.name())
+            self.get(&me.model.name)
         };
-        match idx {
+        match opt {
             None => self.arr.push(me),
             Some(_) => {
                 return Err(Error::RuntimeError(
@@ -129,7 +145,7 @@ where
         Ok(())
     }
 
-    pub fn remove(&mut self, name: impl AsRef<str>) -> Option<ModelExec<M>> {
+    pub fn remove(&mut self, name: impl AsRef<str>) -> Option<ModelExec<Model<X>>> {
         let name = name.as_ref();
         if name.is_empty() {
             return None;
@@ -140,7 +156,7 @@ where
         }
     }
 
-    pub fn enable(&mut self, name: impl AsRef<str>, enabled: bool) -> Option<&ModelExec<M>> {
+    pub fn enable(&mut self, name: impl AsRef<str>, enabled: bool) -> Option<&ModelExec<Model<X>>> {
         let name = name.as_ref();
         if name.is_empty() {
             return None;
@@ -148,7 +164,7 @@ where
         match self.get_mut(&name) {
             None => None,
             Some(me) => {
-                me.model.set_enabled(enabled);
+                me.model.extra.set_enabled(enabled);
                 Some(me)
             }
         }
@@ -161,28 +177,28 @@ where
         }
         let mut n = 0;
         for me in self.arr.iter_mut() {
-            if me.model.group() == group {
-                me.model.set_enabled(enabled);
+            if &me.model.group == group {
+                me.model.extra.set_enabled(enabled);
                 n += 1;
             }
         }
         n
     }
 
-    pub fn get(&self, name: impl AsRef<str>) -> Option<&ModelExec<M>> {
+    pub fn get(&self, name: impl AsRef<str>) -> Option<&ModelExec<Model<X>>> {
         let name = name.as_ref();
         if name.is_empty() {
             return None;
         }
-        self.arr.iter().find(|me| me.model.name() == name)
+        self.arr.iter().find(|me| &me.model.name == name)
     }
 
-    pub fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut ModelExec<M>> {
+    pub fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut ModelExec<Model<X>>> {
         let name = name.as_ref();
         if name.is_empty() {
             return None;
         }
-        self.arr.iter_mut().find(|me| me.model.name() == name)
+        self.arr.iter_mut().find(|me| &me.model.name == name)
     }
 
     #[inline]
@@ -191,6 +207,6 @@ where
         if name.is_empty() {
             return None;
         }
-        self.arr.iter().position(|me| me.model.name() == name)
+        self.arr.iter().position(|me| &me.model.name == name)
     }
 }

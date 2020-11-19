@@ -3,84 +3,14 @@ use crate::ui::buffer::Buffer;
 use crate::ui::layout::Rect;
 use crate::ui::style::{Color, Style};
 use crate::ui::widget::{Block, Widget};
+use crate::ui::UserOutput;
 use crate::ui::width::AppendWidthTab8;
 use std::collections::VecDeque;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Output {
-    Cmd(String),
-    Script(String),
-}
-
-impl Default for Output {
-    fn default() -> Self {
-        Self::Cmd(String::new())
-    }
-}
-
-impl AsRef<str> for Output {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::Cmd(s) => s,
-            Self::Script(s) => s,
-        }
-    }
-}
-
-impl Output {
-    pub fn push(&mut self, c: char) {
-        match self {
-            Self::Cmd(s) => s.push(c),
-            Self::Script(s) => s.push(c),
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        match self {
-            Self::Cmd(s) => s.is_empty(),
-            Self::Script(s) => s.is_empty(),
-        }
-    }
-
-    pub fn is_cmd(&self) -> bool {
-        match self {
-            Self::Cmd(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_script(&self) -> bool {
-        match self {
-            Self::Script(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn pop(&mut self) -> Option<char> {
-        match self {
-            Self::Cmd(s) => s.pop(),
-            Self::Script(s) => s.pop(),
-        }
-    }
-
-    pub fn clear(&mut self) {
-        *self = Output::default();
-    }
-}
-
-impl AppendWidthTab8 for Output {
-    fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
-        match self {
-            Self::Cmd(s) => s.append_width(prev_width, cjk),
-            Self::Script(s) => s.append_width(prev_width, cjk),
-        }
-    }
-}
 
 /// currently only support cjk mode
 #[derive(Debug)]
 pub struct CmdBar {
-    cmd: Output,
+    cmd: UserOutput,
     block: Block,
     style: Style,
     script_prefix: char,
@@ -91,7 +21,7 @@ pub struct CmdBar {
 impl CmdBar {
     pub fn new(script_prefix: char, cjk: bool, hist_size: usize) -> Self {
         Self {
-            cmd: Output::default(),
+            cmd: UserOutput::default(),
             block: Block::default().cjk(cjk),
             style: Style::default(),
             // script_mode: false,
@@ -110,10 +40,10 @@ impl CmdBar {
     pub fn push_char(&mut self, ch: char) {
         if self.cmd.is_empty() && ch == self.script_prefix {
             if self.cmd.is_cmd() {
-                self.cmd = Output::Script(String::new());
+                self.cmd = UserOutput::Script(String::new());
                 self.style = Style::default().bg(Color::Blue);
             } else {
-                self.cmd = Output::Cmd(String::new());
+                self.cmd = UserOutput::Cmd(String::new());
                 self.style = Style::default();
             }
         } else {
@@ -125,13 +55,13 @@ impl CmdBar {
         let ch = self.cmd.pop();
         if ch.is_some() && self.cmd.is_empty() && self.cmd.is_script() {
             self.style = Style::default();
-            self.cmd = Output::Cmd(String::new());
+            self.cmd = UserOutput::Cmd(String::new());
         }
         ch
     }
 
-    pub fn take(&mut self) -> Output {
-        let cmd = std::mem::replace(&mut self.cmd, Output::default());
+    pub fn take(&mut self) -> UserOutput {
+        let cmd = std::mem::replace(&mut self.cmd, UserOutput::default());
         // 每次都记录历史
         self.hist.push(cmd.clone());
         self.style = Style::default();
@@ -175,7 +105,7 @@ impl Widget for CmdBar {
 
 #[derive(Debug)]
 struct CmdHist {
-    cmds: VecDeque<Output>,
+    cmds: VecDeque<UserOutput>,
     idx: usize,
     capacity: usize,
 }
@@ -191,7 +121,7 @@ impl CmdHist {
     }
 
     /// 后移并获取命令
-    pub fn next(&mut self) -> Option<&Output> {
+    pub fn next(&mut self) -> Option<&UserOutput> {
         if self.idx >= self.len() - 1 {
             return None;
         }
@@ -202,7 +132,7 @@ impl CmdHist {
     }
 
     /// 前移并获取命令
-    pub fn prev(&mut self) -> Option<&Output> {
+    pub fn prev(&mut self) -> Option<&UserOutput> {
         if self.idx == 0 {
             return None;
         }
@@ -217,7 +147,7 @@ impl CmdHist {
         self.idx = 0;
     }
 
-    pub fn push(&mut self, cmd: Output) {
+    pub fn push(&mut self, cmd: UserOutput) {
         if let Some(last) = self.last() {
             // 与上一命令完全相同，忽略
             if &cmd == last {
@@ -239,11 +169,11 @@ impl CmdHist {
         self.cmds.len() == 0
     }
 
-    pub fn first(&self) -> Option<&Output> {
+    pub fn first(&self) -> Option<&UserOutput> {
         self.cmds.front()
     }
 
-    pub fn last(&self) -> Option<&Output> {
+    pub fn last(&self) -> Option<&UserOutput> {
         self.cmds.back()
     }
 }
@@ -257,20 +187,20 @@ mod tests {
     fn test_cmd_hist() {
         let mut hist = CmdHist::with_capacity(3);
         assert!(hist.is_empty());
-        hist.push(Output::Cmd("hello".into()));
+        hist.push(UserOutput::Cmd("hello".into()));
         assert!(!hist.is_empty());
-        assert_eq!(&Output::Cmd("hello".into()), hist.prev().unwrap());
-        hist.push(Output::Cmd("world".into()));
-        assert_eq!(&Output::Cmd("world".into()), hist.prev().unwrap());
-        assert_eq!(&Output::Cmd("hello".into()), hist.prev().unwrap());
+        assert_eq!(&UserOutput::Cmd("hello".into()), hist.prev().unwrap());
+        hist.push(UserOutput::Cmd("world".into()));
+        assert_eq!(&UserOutput::Cmd("world".into()), hist.prev().unwrap());
+        assert_eq!(&UserOutput::Cmd("hello".into()), hist.prev().unwrap());
         assert!(hist.prev().is_none());
-        hist.push(Output::Cmd("java".into()));
-        assert_eq!(&Output::Cmd("java".into()), hist.prev().unwrap());
-        assert_eq!(&Output::Cmd("hello".into()), hist.first().unwrap());
-        assert_eq!(&Output::Cmd("java".into()), hist.last().unwrap());
-        hist.push(Output::Cmd("overflow".into()));
-        assert_eq!(&Output::Cmd("world".into()), hist.first().unwrap());
-        hist.push(Output::Cmd("overflow".into()));
-        assert_eq!(&Output::Cmd("world".into()), hist.first().unwrap());
+        hist.push(UserOutput::Cmd("java".into()));
+        assert_eq!(&UserOutput::Cmd("java".into()), hist.prev().unwrap());
+        assert_eq!(&UserOutput::Cmd("hello".into()), hist.first().unwrap());
+        assert_eq!(&UserOutput::Cmd("java".into()), hist.last().unwrap());
+        hist.push(UserOutput::Cmd("overflow".into()));
+        assert_eq!(&UserOutput::Cmd("world".into()), hist.first().unwrap());
+        hist.push(UserOutput::Cmd("overflow".into()));
+        assert_eq!(&UserOutput::Cmd("world".into()), hist.first().unwrap());
     }
 }

@@ -1,11 +1,9 @@
-use crate::codec::Codec;
 use crate::error::Result;
-use crate::runtime::Runtime;
-use crate::ui::line::{RawLine, RawLines};
-use crossbeam_channel::{Receiver, Sender};
-use std::collections::VecDeque;
+use crate::runtime::{RuntimeOutputHandler, Runtime};
+use crate::ui::UserOutput;
+use crate::ui::line::RawLine;
+use crossbeam_channel::Receiver;
 use std::net::{SocketAddr, TcpStream};
-use std::sync::{Arc, Mutex};
 use termion::event::{Key, MouseEvent};
 
 #[derive(Debug)]
@@ -20,9 +18,9 @@ pub enum Event {
     // world disconnected, e.g idle for a lone time
     WorldDisconnected,
     /// user input line
-    UserInputLine(String),
+    UserOutput(UserOutput),
     /// user script line will be sent to script
-    UserScriptLine(String),
+    // UserScriptLine(String),
     /// window resize event
     WindowResize,
     /// tick event
@@ -50,71 +48,10 @@ pub enum Event {
     TerminalMouse(MouseEvent),
 }
 
-/// 运行时事件，进由运行时进行处理
-///
-/// 这些事件是由外部事件派生或由脚本运行生成出来
-#[derive(Debug, Clone)]
-pub enum RuntimeEvent {
-    /// switch codec for both encoding and decoding
-    SwitchCodec(Codec),
-    /// string which is to be sent to server
-    StringToMud(String),
-    /// lines from server or script to display
-    DisplayLines(RawLines),
-}
-
-/// 事件总线
-pub type EventBus = Sender<Event>;
-
-/// 运行时时间队列
-#[derive(Debug, Clone)]
-pub struct EventQueue(Arc<Mutex<VecDeque<RuntimeEvent>>>);
-
-impl EventQueue {
-    pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(VecDeque::new())))
-    }
-
-    pub fn push_line(&self, line: RawLine) {
-        let mut evtq = self.0.lock().unwrap();
-        if let Some(RuntimeEvent::DisplayLines(lines)) = evtq.back_mut() {
-            lines.push_line(line);
-            return;
-        }
-        let mut lines = RawLines::unbounded();
-        lines.push_line(line);
-        evtq.push_back(RuntimeEvent::DisplayLines(lines));
-    }
-
-    pub fn push_cmd(&self, cmd: String) {
-        let mut evtq = self.0.lock().unwrap();
-        if let Some(RuntimeEvent::StringToMud(s)) = evtq.back_mut() {
-            if !s.ends_with('\n') {
-                s.push('\n');
-            }
-            s.push_str(&cmd);
-            return;
-        }
-        evtq.push_back(RuntimeEvent::StringToMud(cmd));
-    }
-
-    pub fn drain_all(&self) -> Vec<RuntimeEvent> {
-        self.0.lock().unwrap().drain(..).collect()
-    }
-
-    pub fn push(&self, re: RuntimeEvent) {
-        self.0.lock().unwrap().push_back(re);
-    }
-}
 
 /// 事件回调
 pub trait EventHandler {
     fn on_event(&mut self, evt: Event, rt: &mut Runtime) -> Result<NextStep>;
-}
-
-/// 运行时事件回调
-pub trait RuntimeEventHandler {
-    fn on_runtime_event(&mut self, evt: RuntimeEvent, rt: &mut Runtime) -> Result<NextStep>;
 }
 
 /// 退出回调
@@ -139,7 +76,7 @@ pub struct EventLoop<EH, QH> {
 
 impl<EH, QH> EventLoop<EH, QH>
 where
-    EH: EventHandler + RuntimeEventHandler,
+    EH: EventHandler + RuntimeOutputHandler,
     QH: QuitHandler,
 {
     pub fn new(rt: Runtime, evtrx: Receiver<Event>, evt_hdl: EH, qt_hdl: QH) -> Self {
@@ -152,7 +89,7 @@ where
     }
 
     pub fn run(mut self) -> Result<()> {
-        loop {
+        'outer: loop {
             let evt = self.evtrx.recv()?;
             // 处理总线上的事件
             match self.evt_hdl.on_event(evt, &mut self.rt)? {
@@ -160,13 +97,20 @@ where
                 NextStep::Skip => continue,
                 NextStep::Run => (),
             }
+            let outputs = self.rt.process_queue();
+            if outputs.is_empty() {
+                continue;
+            }
             // 处理运行时（衍生）事件
-            match self.rt.process_runtime_events(&mut self.evt_hdl)? {
-                NextStep::Quit => break,
-                _ => (),
+            for output in outputs {
+                match self.evt_hdl.on_runtime_output(output, &mut self.rt)? {
+                    NextStep::Quit => break 'outer,
+                    _ => (),
+                }
             }
         }
         self.qt_hdl.on_quit();
         Ok(())
     }
 }
+

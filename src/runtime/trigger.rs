@@ -1,99 +1,80 @@
-use crate::error::Result;
-use crate::runtime::model::{Model, ModelExec, ModelStore};
-use crate::runtime::Target;
+use crate::runtime::model::{Model, ModelExec, ModelExtra, VecModelStore};
 use bitflags::bitflags;
-use serde::{Deserialize, Serialize};
 
-pub type Trigger = ModelExec<TriggerModel>;
+pub type Triggers = VecModelStore<TriggerExtra>;
 
-pub type Triggers = ModelStore<Trigger>;
+pub type Trigger = ModelExec<TriggerExtra>;
+
+pub type TriggerModel = Model<TriggerExtra>;
 
 bitflags! {
     pub struct TriggerFlags: u16 {
-        const Enabled = 0x0001;
-        const OmitFromLog = 0x0002;
-        const OmitFromOutput = 0x0004;
-        const KeepEvaluating = 0x0008;
-        const IgnoreCase = 0x10;
-        const RegularExpression = 0x0020;
-        const ExpandVariables = 0x0200;
-        const LowercaseWildcard = 0x0400;
-        const Replace = 0x0400;
-        const Temporary = 0x4000;
-        const OneShot = 0x8000;
+        const ENABLED = 0x0001;
+        // const OmitFromLog = 0x0002;
+        // const OmitFromOutput = 0x0004;
+        const KEEP_EVALUATING = 0x0008;
+        // const IgnoreCase = 0x10;
+        // const RegularExpression = 0x0020;
+        // const ExpandVariables = 0x0200;
+        // const LowercaseWildcard = 0x0400;
+        // const Replace = 0x0400;
+        // const Temporary = 0x4000;
+        const ONESHOT = 0x8000;
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TriggerModel {
-    pub name: String,
-    pub group: String,
-    pub pattern: String,
+#[derive(Debug, Clone, PartialEq)]
+pub struct TriggerExtra {
     pub match_lines: u32,
-    pub enabled: bool,
+    pub flags: TriggerFlags,
 }
 
-impl Default for TriggerModel {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            group: String::from("default"),
-            pattern: String::new(),
-            match_lines: 1,
-            enabled: false,
+impl ModelExtra for TriggerExtra {
+    fn enabled(&self) -> bool {
+        self.flags.contains(TriggerFlags::ENABLED)
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        if enabled {
+            self.flags.insert(TriggerFlags::ENABLED);
+        } else {
+            self.flags.remove(TriggerFlags::ENABLED);
+        }
+    }
+
+    fn keep_evaluating(&self) -> bool {
+        self.flags.contains(TriggerFlags::KEEP_EVALUATING)
+    }
+
+    fn set_keep_evaluating(&mut self, keep_evaluating: bool) {
+        if keep_evaluating {
+            self.flags.insert(TriggerFlags::KEEP_EVALUATING);
+        } else {
+            self.flags.remove(TriggerFlags::KEEP_EVALUATING);
         }
     }
 }
 
-impl Model for TriggerModel {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn group(&self) -> &str {
-        &self.group
-    }
-
-    fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-    }
-
-    fn compile(self) -> Result<Trigger> {
-        let re =
-            super::compile_pattern(&self.pattern, 1)?;
-        Ok(Trigger::new(self, re))
+impl TriggerExtra {
+    fn new() -> Self {
+        Self{
+            match_lines: 1,
+            flags: TriggerFlags::empty(),
+        }
     }
 }
 
 impl TriggerModel {
-    pub fn name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
-        self
+    pub fn one_shot(&self) -> bool {
+        self.extra.flags.contains(TriggerFlags::ONESHOT)
     }
 
-    pub fn group(mut self, group: impl Into<String>) -> Self {
-        self.group = group.into();
-        self
-    }
-
-    pub fn pattern(mut self, pattern: impl Into<String>) -> Self {
-        self.pattern = pattern.into();
-        self
-    }
-
-    pub fn match_lines(mut self, match_lines: u32) -> Self {
-        self.match_lines = match_lines;
-        self
-    }
-
-    pub fn enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self
+    pub fn set_one_shot(&mut self, one_shot: bool) {
+        if one_shot {
+            self.extra.flags.insert(TriggerFlags::ONESHOT);
+        } else {
+            self.extra.flags.remove(TriggerFlags::ONESHOT);
+        }
     }
 }
 
@@ -125,22 +106,27 @@ mod tests {
     #[test]
     fn test_trigger_match() {
         let input = "你一觉醒来觉得精力充沛。";
-        let tr = TriggerModel::default()
-            .pattern("^你一觉醒来.*")
-            .compile()
-            .unwrap();
+        let tr = TriggerModel{
+            name: "t1".into(),
+            pattern: "^你一觉醒来.*".into(),
+            group: "default".into(),
+            extra: TriggerExtra::new(),
+        }.compile().unwrap();
         assert!(tr.is_match(input));
-        let tr = TriggerModel::default()
-            .pattern("^(.*)一觉(.*)来.*")
-            .compile()
-            .unwrap();
+        let tr = TriggerModel{
+            name: "t2".into(),
+            pattern: "^(.*)一觉(.*)来.*".into(),
+            group: "default".into(),
+            extra: TriggerExtra::new(),
+        }.compile().unwrap();
         assert!(tr.is_match(input));
-
         let input = "100/200\n300/400";
-        let tr = TriggerModel::default()
-            .pattern("^(\\d+)/\\d+\n(\\d+)/\\d+$")
-            .compile()
-            .unwrap();
+        let tr = TriggerModel{
+            name: "t3".into(),
+            pattern: "^(\\d+)/\\d+\n(\\d+)/\\d+$".into(),
+            group: "default".into(),
+            extra: TriggerExtra::new(),
+        }.compile().unwrap();
         assert!(tr.is_match(input));
     }
 }

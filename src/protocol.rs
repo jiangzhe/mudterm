@@ -53,6 +53,7 @@ impl Packet {
                 let lines = decode_lines(&bs)?;
                 Self::Lines(lines)
             }
+            0xff => Self::Err(String::from_utf8(bs)?),
             header => {
                 return Err(Error::DecodeError(format!(
                     "invalid header in packet end {:x}",
@@ -178,9 +179,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_read_packet() {
-        let input = vec![1u8, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4];
-        let pkt = Packet::read_from(&mut &input[..]).unwrap();
-        println!("pkt={:?}", pkt);
+    fn test_read_and_write_auth_req() {
+        let pkt = Packet::AuthReq(vec![0; 20]);
+        let mut buf = vec![];
+        pkt.clone().write_to(&mut buf).unwrap();
+        let decoded = Packet::read_from(&buf[..]).unwrap();
+        assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_read_and_write_auth_resp() {
+        let pkt = Packet::AuthResp(vec![0; 20]);
+        let mut buf = vec![];
+        pkt.clone().write_to(&mut buf).unwrap();
+        let decoded = Packet::read_from(&buf[..]).unwrap();
+        assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_read_and_write_ok() {
+        let pkt = Packet::Ok;
+        let mut buf = vec![];
+        pkt.clone().write_to(&mut buf).unwrap();
+        let decoded = Packet::read_from(&buf[..]).unwrap();
+        assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_read_and_write_err() {
+        let pkt = Packet::Err("unimplemented".to_owned());
+        let mut buf = vec![];
+        pkt.clone().write_to(&mut buf).unwrap();
+        let decoded = Packet::read_from(&buf[..]).unwrap();
+        assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_read_and_write_text() {
+        let pkt = Packet::Text("hp".to_owned());
+        let mut buf = vec![];
+        pkt.clone().write_to(&mut buf).unwrap();
+        let decoded = Packet::read_from(&buf[..]).unwrap();
+        assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_read_and_write_lines() {
+        let pkt = Packet::Lines(vec![RawLine::fmt_err("err"), RawLine::fmt_note("notes")]);
+        let mut buf = vec![];
+        pkt.clone().write_to(&mut buf).unwrap();
+        let decoded = Packet::read_from(&buf[..]).unwrap();
+        assert_eq!(pkt, decoded);
     }
 }

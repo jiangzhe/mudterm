@@ -1,73 +1,68 @@
-use crate::error::Result;
-use crate::runtime::model::{Model, ModelExec, ModelStore};
-use serde::{Deserialize, Serialize};
-use regex::Regex;
+use crate::runtime::model::{Model, ModelExec, ModelExtra, VecModelStore};
+use bitflags::bitflags;
 
-pub type Aliases = ModelStore<Alias>;
+pub type Aliases = VecModelStore<Alias>;
 
 pub type Alias = ModelExec<AliasModel>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AliasModel {
-    pub name: String,
-    pub group: String,
-    pub pattern: String,
-    pub enabled: bool,
+pub type AliasModel = Model<AliasFlags>;
+
+bitflags! {
+    pub struct AliasFlags: u16 {
+        const ENABLED = 0x0001;
+        const KEEP_EVALUATING = 0x0008;
+    }
 }
 
-impl Default for AliasModel {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            group: String::from("default"),
-            pattern: String::new(),
-            enabled: true,
+impl ModelExtra for AliasFlags {
+    fn enabled(&self) -> bool {
+        self.contains(AliasFlags::ENABLED)
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        if enabled {
+            self.insert(AliasFlags::ENABLED);
+        } else {
+            self.remove(AliasFlags::ENABLED);
+        }
+    }
+
+    fn keep_evaluating(&self) -> bool {
+        self.contains(AliasFlags::KEEP_EVALUATING)
+    }
+
+    fn set_keep_evaluating(&mut self, keep_evaluating: bool) {
+        if keep_evaluating {
+            self.insert(AliasFlags::KEEP_EVALUATING);
+        } else {
+            self.remove(AliasFlags::KEEP_EVALUATING);
         }
     }
 }
 
-impl Model for AliasModel {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn group(&self) -> &str {
-        &self.group
-    }
-
-    fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-    }
-
-    fn compile(self) -> Result<Alias> {
-        let re = Regex::new(&self.pattern)?;
-        Ok(Alias::new(self, re))
-    }
-}
-
 impl AliasModel {
-    pub fn name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
-        self
+
+    pub fn enabled(&self) -> bool {
+        self.extra.contains(AliasFlags::ENABLED)
     }
 
-    pub fn group(mut self, group: impl Into<String>) -> Self {
-        self.group = group.into();
-        self
+    pub fn set_enabled(&mut self, enabled: bool) {
+        if enabled {
+            self.extra.insert(AliasFlags::ENABLED);
+        } else {
+            self.extra.remove(AliasFlags::ENABLED);
+        }
     }
 
-    pub fn pattern(mut self, pattern: impl Into<String>) -> Self {
-        self.pattern = pattern.into();
-        self
+    pub fn keep_evaluating(&self) -> bool {
+        self.extra.contains(AliasFlags::KEEP_EVALUATING)
     }
 
-    pub fn enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self
+    pub fn set_keep_evaluating(&mut self, keep_evaluating: bool) {
+        if keep_evaluating {
+            self.extra.insert(AliasFlags::KEEP_EVALUATING);
+        } else {
+            self.extra.remove(AliasFlags::KEEP_EVALUATING);
+        }
     }
 }

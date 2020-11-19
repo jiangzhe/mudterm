@@ -1,6 +1,6 @@
 use crate::error::Result;
-use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, RuntimeEventHandler};
-use crate::runtime::Runtime;
+use crate::event::{Event, EventHandler, NextStep, QuitHandler};
+use crate::runtime::{Runtime, RuntimeOutput, RuntimeOutputHandler};
 use crate::ui::line::RawLine;
 use crate::ui::UIEvent;
 use crossbeam_channel::Sender;
@@ -48,17 +48,13 @@ impl EventHandler for Standalone {
             Event::WorldLines(lines) => {
                 rt.process_world_lines(lines);
             }
-            Event::UserInputLine(cmd) => {
-                rt.preprocess_user_cmd(cmd);
-            }
-            Event::UserScriptLine(s) => {
-                rt.process_user_scripts(s);
+            Event::UserOutput(output) => {
+                rt.process_user_output(output);
             }
             Event::WorldDisconnected => {
                 log::error!("world down or not reachable");
                 // let user quit
-                rt.queue
-                    .push_line(RawLine::fmt_err("与服务器断开了连接，请关闭并重新连接"));
+                rt.push_line_to_ui(RawLine::fmt_err("与服务器断开了连接，请关闭并重新连接"));
             }
             // standalone模式不支持客户端连接，待增强
             Event::NewClient(..)
@@ -72,22 +68,20 @@ impl EventHandler for Standalone {
     }
 }
 
-impl RuntimeEventHandler for Standalone {
-    fn on_runtime_event(&mut self, evt: RuntimeEvent, rt: &mut Runtime) -> Result<NextStep> {
-        match evt {
-            RuntimeEvent::SwitchCodec(code) => {
-                rt.mud_codec.switch_codec(code);
-            }
-            RuntimeEvent::StringToMud(mut s) => {
+impl RuntimeOutputHandler for Standalone {
+    fn on_runtime_output(&mut self, output: RuntimeOutput, rt: &mut Runtime) -> Result<NextStep> {
+        match output {
+            RuntimeOutput::ToServer(mut s) => {
                 if !s.ends_with('\n') {
                     s.push('\n');
                 }
-                let bs = rt.mud_codec.encode(&s)?;
+                let bs = rt.encode(&s)?;
                 self.worldtx.send(bs)?;
             }
-            RuntimeEvent::DisplayLines(lines) => {
+            RuntimeOutput::ToUI(lines) => {
                 self.uitx.send(UIEvent::Lines(lines.into_vec()))?;
             }
+            RuntimeOutput::ImmediateAction(action) => unreachable!("action '{:?}' should not be passed to standalone handler", action),
         }
         Ok(NextStep::Run)
     }

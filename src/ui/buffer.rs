@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn test_buffer_set_multi_line() {
+    fn test_buffer_set_multi_lines() {
         let mut buffer = BufferVec::empty(Rect::new(1, 1, 6, 2));
         let input = "hell\no, world";
         for (i, line) in input.split('\n').enumerate() {
@@ -396,7 +396,7 @@ mod tests {
         }
         assert_eq!(
             multi_lines(&buffer),
-            vec!["hell".to_owned(), "o, wo".to_owned(),]
+            vec!["hell".to_owned(), "o, wor".to_owned(),]
         );
     }
 

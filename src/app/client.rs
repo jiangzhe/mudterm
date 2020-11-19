@@ -1,8 +1,8 @@
 use crate::conf;
 use crate::error::Result;
-use crate::event::{Event, EventHandler, NextStep, QuitHandler, RuntimeEvent, RuntimeEventHandler};
+use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::protocol::Packet;
-use crate::runtime::Runtime;
+use crate::runtime::{Runtime, RuntimeAction, RuntimeOutput, RuntimeOutputHandler};
 use crate::signal;
 use crate::ui::line::RawLine;
 use crate::ui::{Screen, UIEvent};
@@ -141,17 +141,13 @@ impl EventHandler for Client {
             Event::LinesFromServer(lines) => {
                 rt.process_world_lines(lines);
             }
-            Event::UserInputLine(cmd) => {
-                rt.preprocess_user_cmd(cmd);
-            }
-            Event::UserScriptLine(s) => {
-                rt.process_user_scripts(s);
+            Event::UserOutput(output) => {
+                rt.process_user_output(output);
             }
             Event::ServerDown => {
                 log::error!("server down or not reachable");
                 // let user quit
-                rt.queue
-                    .push_line(RawLine::fmt_err("与服务器断开了连接，请关闭并重新连接"));
+                rt.push_line_to_ui(RawLine::fmt_err("与服务器断开了连接，请关闭并重新连接"));
             }
             // client模式不支持客户端连接
             Event::NewClient(..)
@@ -169,19 +165,19 @@ impl EventHandler for Client {
     }
 }
 
-impl RuntimeEventHandler for Client {
-    fn on_runtime_event(&mut self, evt: RuntimeEvent, _rt: &mut Runtime) -> Result<NextStep> {
-        match evt {
-            RuntimeEvent::SwitchCodec(_) => unreachable!("client mode does not support {:?}", evt),
-            RuntimeEvent::StringToMud(mut s) => {
+impl RuntimeOutputHandler for Client {
+    fn on_runtime_output(&mut self, output: RuntimeOutput, rt: &mut Runtime) -> Result<NextStep> {
+        match output {
+            RuntimeOutput::ToServer(mut s) => {
                 if !s.ends_with('\n') {
                     s.push('\n');
                 }
                 self.srvtx.send(Packet::Text(s))?;
             }
-            RuntimeEvent::DisplayLines(lines) => {
+            RuntimeOutput::ToUI(lines) => {
                 self.uitx.send(UIEvent::Lines(lines.into_vec()))?;
             }
+            RuntimeOutput::ImmediateAction(action) => unreachable!("action '{:?}' should not be passed to client handler", action),
         }
         Ok(NextStep::Run)
     }
