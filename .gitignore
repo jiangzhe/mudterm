@@ -24,3 +24,6 @@ mudterm-core/data/
 /data/
 
 .vscode/
+
+sync.sh
+

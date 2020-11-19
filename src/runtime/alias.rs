@@ -1,9 +1,9 @@
 use crate::error::Result;
 use crate::runtime::model::{Model, ModelExec, ModelStore};
-use crate::runtime::{Pattern, Scripts, Target};
 use serde::{Deserialize, Serialize};
+use regex::Regex;
 
-pub type Aliases = ModelStore<AliasModel>;
+pub type Aliases = ModelStore<Alias>;
 
 pub type Alias = ModelExec<AliasModel>;
 
@@ -13,10 +13,6 @@ pub struct AliasModel {
     pub name: String,
     pub group: String,
     pub pattern: String,
-    pub regexp: bool,
-    pub target: Target,
-    pub scripts: String,
-    pub seq: u32,
     pub enabled: bool,
 }
 
@@ -26,10 +22,6 @@ impl Default for AliasModel {
             name: String::new(),
             group: String::from("default"),
             pattern: String::new(),
-            regexp: false,
-            target: Target::World,
-            scripts: String::new(),
-            seq: 100,
             enabled: true,
         }
     }
@@ -44,10 +36,6 @@ impl Model for AliasModel {
         &self.group
     }
 
-    fn target(&self) -> Target {
-        self.target
-    }
-
     fn enabled(&self) -> bool {
         self.enabled
     }
@@ -57,9 +45,8 @@ impl Model for AliasModel {
     }
 
     fn compile(self) -> Result<Alias> {
-        let (pattern, scripts) =
-            super::compile_scripts(&self.pattern, &self.scripts, self.regexp, 1)?;
-        Ok(Alias::new(self, pattern, scripts))
+        let re = Regex::new(&self.pattern)?;
+        Ok(Alias::new(self, re))
     }
 }
 
@@ -74,30 +61,8 @@ impl AliasModel {
         self
     }
 
-    pub fn text(mut self, pattern: impl Into<String>) -> Self {
+    pub fn pattern(mut self, pattern: impl Into<String>) -> Self {
         self.pattern = pattern.into();
-        self.regexp = false;
-        self
-    }
-
-    pub fn regexp(mut self, pattern: impl Into<String>) -> Self {
-        self.pattern = pattern.into();
-        self.regexp = true;
-        self
-    }
-
-    pub fn target(mut self, target: Target) -> Self {
-        self.target = target;
-        self
-    }
-
-    pub fn seq(mut self, seq: u32) -> Self {
-        self.seq = seq;
-        self
-    }
-
-    pub fn scripts(mut self, scripts: impl Into<String>) -> Self {
-        self.scripts = scripts.into();
         self
     }
 

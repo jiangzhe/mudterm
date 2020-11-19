@@ -10,13 +10,11 @@ use crate::error::{Error, Result};
 use crate::event::{Event, EventQueue, NextStep, RuntimeEvent, RuntimeEventHandler};
 use crate::ui::line::RawLine;
 use crate::ui::style::{Color, Style};
-use alias::Alias;
 use crossbeam_channel::Sender;
 use mlua::Lua;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hash;
@@ -24,7 +22,7 @@ use std::io::Write;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use sub::{Sub, SubParser};
-use trigger::{Trigger, Triggers};
+use alias::{Aliases, Alias};
 use uuid::Uuid;
 
 /// 脚本环境中的变量存储和查询
@@ -51,6 +49,10 @@ impl Variables {
     }
 }
 
+const GLOBAL_ALIAS_CALLBACKS: &str = "_global_alias_callbacks";
+const GLOBAL_TRIGGER_CALLBACKS: &str = "_global_trigger_callbacks";
+const GLOBAL_TIMER_CALLBACKS: &str = "_global_timer_callbacks";
+
 /// 运行时保存别名，定时器，触发器，以及脚本引擎
 /// 可直接提交事件到总线
 pub struct Runtime {
@@ -65,7 +67,8 @@ pub struct Runtime {
     send_empty_cmd: bool,
     cmd_nr: usize,
     logger: Option<File>,
-    triggers: Triggers,
+    // triggers: Triggers,
+    aliases: Aliases,
 }
 
 impl Runtime {
@@ -83,7 +86,8 @@ impl Runtime {
             send_empty_cmd: config.term.send_empty_cmd,
             cmd_nr: 0,
             logger: None,
-            triggers: Triggers::new(),
+            // triggers: Triggers::new(),
+            aliases: Aliases::new(),
         }
     }
 
@@ -91,9 +95,19 @@ impl Runtime {
         self.logger = Some(logger);
     }
 
-    pub fn exec<T: AsRef<[u8]>>(&self, input: T) -> Result<()> {
+    pub fn exec_script(&self, input: impl AsRef<[u8]>) -> Result<()> {
         let input = input.as_ref();
-        let output = self.lua.load(input).exec()?;
+        self.lua.load(input).exec()?;
+        Ok(())
+    }
+
+    pub fn exec_alias(&self, name: String, text: String) -> Result<()> {
+        let alias = self.aliases.get(&name)
+            .ok_or_else(|| Error::RuntimeError(format!("alias '{}' mismatch with text '{}'", &name, &text)))?;
+        let wildcards = alias.captures(&text)?;
+        let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_ALIAS_CALLBACKS)?;
+        let function: mlua::Function = callbacks.get(&alias.model.name[..])?;
+        function.call((name, text, wildcards))?;
         Ok(())
     }
 
@@ -104,19 +118,22 @@ impl Runtime {
         } else if cmd.ends_with('\n') {
             cmd.truncate(cmd.len() - 1)
         }
-        let cmds = translate_cmds(cmd, self.cmd_delim, self.send_empty_cmd, &vec![]);
-        for (tgt, cmd) in cmds {
-            match tgt {
-                Target::World => {
-                    self.cmd_nr += 1;
-                    if self.echo_cmd && self.cmd_nr > 2 {
-                        // self.queue.push_styled_line(StyledLine::raw(cmd.to_owned()));
-                        self.queue.push_line(RawLine::fmt_raw(&cmd));
+        let cmds = self.translate_cmds(cmd, self.cmd_delim, self.send_empty_cmd);
+        if cmds.is_empty() {
+            // 对于空字符，推送空行
+            self.queue.push_cmd(String::new());
+            return;
+        }
+        for cmd in cmds {
+            match cmd {
+                PostCmd::Raw(mut s) => {
+                    if !s.ends_with('\n') {
+                        s.push('\n');
                     }
-                    self.queue.push_cmd(cmd);
+                    self.queue.push_cmd(s);
                 }
-                Target::Script => {
-                    if let Err(e) = self.exec(cmd) {
+                PostCmd::Alias{name, text} => {
+                    if let Err(e) = self.exec_alias(name, text) {
                         let err = format_err(e.to_string());
                         self.queue.push_line(RawLine::fmt_err(err));
                     }
@@ -126,7 +143,7 @@ impl Runtime {
     }
 
     pub fn process_user_scripts(&mut self, scripts: String) {
-        if let Err(e) = self.exec(&scripts) {
+        if let Err(e) = self.exec_script(&scripts) {
             let err = format_err(e.to_string());
             self.queue.push_line(RawLine::fmt_err(err));
         }
@@ -268,6 +285,43 @@ impl Runtime {
         // todo: 初始化AddTrigger函数
         Ok(())
     }
+
+    pub fn translate_cmds(
+        &self,
+        cmd: String,
+        delim: char,
+        send_empty_cmd: bool,
+    ) -> Vec<PostCmd> {
+        if cmd.is_empty() {
+            return vec![];
+        }
+        let raw_lines: Vec<String> = cmd
+            .split(|c| c == '\n' || c == delim)
+            .filter(|s| send_empty_cmd || !s.is_empty())
+            .map(|s| s.to_owned())
+            .collect();
+        let mut cmds = Vec::new();
+        for raw_line in raw_lines {
+            if raw_line.is_empty() {
+                // send empty line directly, maybe filtered before this action
+                cmds.push(PostCmd::Raw(raw_line));
+            } else if let Some(alias) = match_aliases(&raw_line, self.aliases.as_ref()) {
+                log::debug!(
+                    "alias[{}/{}: {}] matched",
+                    alias.model.group,
+                    alias.model.name,
+                    alias.model.pattern
+                );
+                cmds.push(PostCmd::Alias{
+                    name: alias.model.name.clone(),
+                    text: raw_line,
+                })
+            } else {
+                cmds.push(PostCmd::Raw(raw_line));
+            }
+        }
+        cmds
+    }
 }
 
 fn format_err(err: impl AsRef<str>) -> String {
@@ -292,27 +346,6 @@ fn format_err(err: impl AsRef<str>) -> String {
 }
 
 #[derive(Debug, Clone)]
-pub enum Pattern {
-    Plain(String),
-    Regex(Regex),
-}
-
-impl Pattern {
-    pub fn is_match(&self, input: &str, strict: bool) -> bool {
-        match self {
-            Pattern::Plain(ref s) => {
-                if strict {
-                    input == s
-                } else {
-                    input.contains(s)
-                }
-            }
-            Pattern::Regex(re) => re.is_match(input),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 pub enum Scripts {
     Plain(String),
     Subs(Vec<Sub>),
@@ -334,72 +367,25 @@ impl FromStr for Scripts {
 }
 
 /// 编译匹配及运行脚本
-fn compile_scripts(
+fn compile_pattern(
     pattern: &str,
-    scripts: &str,
-    regexp: bool,
     match_lines: usize,
-) -> Result<(Pattern, Scripts)> {
+) -> Result<Regex> {
     if pattern.is_empty() {
         return Err(Error::RuntimeError(
             "The match_text cannot be empty".to_owned(),
         ));
     }
-    if regexp {
-        // handle multi-line
-        let re = if match_lines > 1 {
-            let mut pat = String::with_capacity(pattern.len() + 4);
-            // enable multi-line feature by prefix 'm' flag
-            pat.push_str("(?m)");
-            pat.push_str(&pattern);
-            Regex::new(&pat)?
-        } else {
-            Regex::new(&pattern)?
-        };
-        Ok((Pattern::Regex(re), scripts.parse()?))
+    let re = if match_lines > 1 {
+        let mut pat = String::with_capacity(pattern.len() + 4);
+        // enable multi-line feature by prefix 'm' flag
+        pat.push_str("(?m)");
+        pat.push_str(&pattern);
+        Regex::new(&pat)?
     } else {
-        Ok((
-            Pattern::Plain(pattern.to_owned()),
-            Scripts::Plain(scripts.to_owned()),
-        ))
-    }
-}
-
-/// 正则匹配并替换脚本中的占位符
-///
-/// 若输入无法匹配正则，返回空
-fn prepare_scripts<'a>(
-    pattern: &Pattern,
-    scripts: &'a Scripts,
-    input: &str,
-) -> Option<Cow<'a, str>> {
-    match (pattern, scripts) {
-        (_, Scripts::Plain(s)) => Some(Cow::Borrowed(s)),
-        (Pattern::Regex(re), Scripts::Subs(subs)) => {
-            if let Some(caps) = re.captures(input) {
-                let mut r = String::new();
-                for sub in subs {
-                    match sub {
-                        Sub::Text(s) => r.push_str(s),
-                        Sub::Number(num) => {
-                            if let Some(m) = caps.get(*num as usize) {
-                                r.push_str(m.as_str());
-                            }
-                        }
-                        Sub::Name(name) => {
-                            if let Some(m) = caps.name(name) {
-                                r.push_str(m.as_str());
-                            }
-                        }
-                    }
-                }
-                Some(Cow::Owned(r))
-            } else {
-                return None;
-            }
-        }
-        _ => unreachable!("plain pattern with subs scripts"),
-    }
+        Regex::new(&pattern)?
+    };
+    Ok(re)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -408,43 +394,19 @@ pub enum Target {
     Script,
 }
 
-pub fn translate_cmds(
-    cmd: String,
-    delim: char,
-    send_empty_cmd: bool,
-    aliases: &[Alias],
-) -> Vec<(Target, String)> {
-    if cmd.is_empty() {
-        return vec![(Target::World, String::new())];
-    }
-    let raw_lines: Vec<String> = cmd
-        .split(|c| c == '\n' || c == delim)
-        .filter(|s| send_empty_cmd || !s.is_empty())
-        .map(|s| s.to_owned())
-        .collect();
-    let mut cmds = Vec::new();
-    for raw_line in raw_lines {
-        if raw_line.is_empty() {
-            // send empty line directly, maybe filtered before this action
-            cmds.push((Target::World, raw_line));
-        } else if let Some(alias) = match_aliases(&raw_line, aliases) {
-            log::debug!(
-                "alias[{}/{}: {}] matched",
-                alias.model.group,
-                alias.model.name,
-                alias.model.pattern
-            );
-            cmds.push((alias.model.target, alias.model.scripts.clone()))
-        } else {
-            cmds.push((Target::World, raw_line))
-        }
-    }
-    cmds
+/// 预处理后的命令，用户原始命令，或经过别名匹配后的脚本名
+#[derive(Debug, Clone)]
+pub enum PostCmd {
+    Raw(String),
+    Alias{
+        name: String,
+        text: String,
+    },
 }
 
 fn match_aliases<'a>(input: &str, aliases: &'a [Alias]) -> Option<&'a Alias> {
     for alias in aliases {
-        if alias.is_match(&input) {
+        if alias.model.enabled && alias.is_match(&input) {
             return Some(alias);
         }
     }

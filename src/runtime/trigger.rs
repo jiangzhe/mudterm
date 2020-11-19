@@ -30,12 +30,8 @@ pub struct TriggerModel {
     pub name: String,
     pub group: String,
     pub pattern: String,
-    pub regexp: bool,
-    pub target: Target,
     pub match_lines: u32,
-    pub seq: u32,
     pub enabled: bool,
-    pub scripts: String,
 }
 
 impl Default for TriggerModel {
@@ -44,12 +40,8 @@ impl Default for TriggerModel {
             name: String::new(),
             group: String::from("default"),
             pattern: String::new(),
-            regexp: false,
-            target: Target::World,
             match_lines: 1,
-            seq: 100,
             enabled: false,
-            scripts: String::new(),
         }
     }
 }
@@ -63,10 +55,6 @@ impl Model for TriggerModel {
         &self.group
     }
 
-    fn target(&self) -> Target {
-        self.target
-    }
-
     fn enabled(&self) -> bool {
         self.enabled
     }
@@ -76,9 +64,9 @@ impl Model for TriggerModel {
     }
 
     fn compile(self) -> Result<Trigger> {
-        let (pattern, scripts) =
-            super::compile_scripts(&self.pattern, &self.scripts, self.regexp, 1)?;
-        Ok(Trigger::new(self, pattern, scripts))
+        let re =
+            super::compile_pattern(&self.pattern, 1)?;
+        Ok(Trigger::new(self, re))
     }
 }
 
@@ -93,20 +81,8 @@ impl TriggerModel {
         self
     }
 
-    pub fn text(mut self, pattern: impl Into<String>) -> Self {
+    pub fn pattern(mut self, pattern: impl Into<String>) -> Self {
         self.pattern = pattern.into();
-        self.regexp = false;
-        self
-    }
-
-    pub fn regexp(mut self, pattern: impl Into<String>) -> Self {
-        self.pattern = pattern.into();
-        self.regexp = true;
-        self
-    }
-
-    pub fn target(mut self, target: Target) -> Self {
-        self.target = target;
         self
     }
 
@@ -115,29 +91,9 @@ impl TriggerModel {
         self
     }
 
-    pub fn seq(mut self, seq: u32) -> Self {
-        self.seq = seq;
-        self
-    }
-
-    pub fn scripts(mut self, scripts: impl Into<String>) -> Self {
-        self.scripts = scripts.into();
-        self
-    }
-
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
-    }
-
-    pub fn compile(self) -> Result<Trigger> {
-        let (pattern, scripts) = super::compile_scripts(
-            &self.pattern,
-            &self.scripts,
-            self.regexp,
-            self.match_lines as usize,
-        )?;
-        Ok(Trigger::new(self, pattern, scripts))
     }
 }
 
@@ -170,27 +126,21 @@ mod tests {
     fn test_trigger_match() {
         let input = "你一觉醒来觉得精力充沛。";
         let tr = TriggerModel::default()
-            .regexp("^你一觉醒来.*")
-            .scripts("say hi")
+            .pattern("^你一觉醒来.*")
             .compile()
             .unwrap();
         assert!(tr.is_match(input));
-        assert_eq!("say hi", tr.prepare_scripts(input).unwrap());
         let tr = TriggerModel::default()
-            .regexp("^(.*)一觉(.*)来.*")
-            .scripts("say %1 %2")
+            .pattern("^(.*)一觉(.*)来.*")
             .compile()
             .unwrap();
         assert!(tr.is_match(input));
-        assert_eq!("say 你 醒", tr.prepare_scripts(input).unwrap());
 
         let input = "100/200\n300/400";
         let tr = TriggerModel::default()
-            .regexp("^(\\d+)/\\d+\n(\\d+)/\\d+$")
-            .scripts("say %1 %2")
+            .pattern("^(\\d+)/\\d+\n(\\d+)/\\d+$")
             .compile()
             .unwrap();
         assert!(tr.is_match(input));
-        assert_eq!("say 100 300", tr.prepare_scripts(input).unwrap());
     }
 }

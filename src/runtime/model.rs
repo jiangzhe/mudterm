@@ -1,14 +1,13 @@
 use crate::error::{Error, Result};
-use crate::runtime::{Pattern, Scripts, Target};
-use std::borrow::Cow;
+use regex::Regex;
+use std::collections::HashMap;
+use mlua::ToLua;
 
 /// 对原模型的抽象
 pub trait Model: Sized {
     fn name(&self) -> &str;
 
     fn group(&self) -> &str;
-
-    fn target(&self) -> Target;
 
     fn enabled(&self) -> bool;
 
@@ -21,34 +20,88 @@ pub trait Model: Sized {
 #[derive(Debug, Clone)]
 pub struct ModelExec<M> {
     pub model: M,
-    pattern: Pattern,
-    scripts: Scripts,
+    re: Regex,
 }
 
 impl<M> ModelExec<M>
 where
-    M: Model,
+    M: Model + std::fmt::Debug,
 {
-    pub fn new(model: M, pattern: Pattern, scripts: Scripts) -> Self {
+    pub fn new(model: M, re: Regex) -> Self {
         Self {
             model,
-            pattern,
-            scripts,
+            re,
         }
     }
 
-    pub fn is_match(&self, input: &str) -> bool {
-        self.pattern.is_match(input, true)
+    pub fn is_match(&self, input: impl AsRef<str>) -> bool {
+        self.re.is_match(input.as_ref())
     }
 
-    pub fn prepare_scripts(&self, input: &str) -> Option<Cow<str>> {
-        super::prepare_scripts(&self.pattern, &self.scripts, input)
+    // todo: 增加style的捕获    
+    pub fn captures(&self, input: impl AsRef<str>) -> Result<ModelCaptures> {
+        let captures = self.re.captures(input.as_ref())
+            .ok_or_else(|| Error::RuntimeError(format!("mismatch alias {:?}", self.model)))?;
+        let mut names = self.re.capture_names().skip(1);
+        let mut mapping = HashMap::new();
+        while let Some((i, om)) = captures.iter().enumerate().skip(1).next() {
+            let name = names.next().unwrap();
+            if let Some(m) = om {
+                if let Some(name) = name {
+                    mapping.insert(NumberOrString::new_string(name), m.as_str().to_owned());
+                }
+                mapping.insert(NumberOrString::Number(i), m.as_str().to_owned());
+            }
+        }
+        Ok(ModelCaptures(mapping))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum NumberOrString {
+    Number(usize),
+    String(String),
+}
+
+impl NumberOrString {
+
+    pub fn new_string(s: impl Into<String>) -> Self {
+        Self::String(s.into())
+    }
+
+    pub fn new_number(n: usize) -> Self {
+        Self::Number(n)
+    }
+}
+
+
+
+#[derive(Debug, Clone)]
+pub struct ModelCaptures(HashMap<NumberOrString, String>);
+
+impl<'lua> ToLua<'lua> for ModelCaptures {
+    fn to_lua(self, lua: &'lua mlua::Lua) -> mlua::Result<mlua::Value<'lua>> {
+        let table = lua.create_table()?;
+        for (k, v) in self.0 {
+            match k {
+                NumberOrString::Number(n) => table.set(n, v)?,
+                NumberOrString::String(s) => table.set(s, v)?,
+            }
+        }
+        Ok(mlua::Value::Table(table))
     }
 }
 
 #[derive(Debug)]
 pub struct ModelStore<T> {
     arr: Vec<T>,
+}
+
+impl<T> AsRef<[T]> for ModelStore<T> {
+
+    fn as_ref(&self) -> &[T] {
+        self.arr.as_ref()
+    }
 }
 
 impl<M> ModelStore<ModelExec<M>>
