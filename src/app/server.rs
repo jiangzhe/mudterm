@@ -4,8 +4,8 @@ use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::protocol::Packet;
 use crate::runtime::{Runtime, RuntimeOutput, RuntimeOutputHandler};
 use crate::transport::{Outbound, Telnet, TelnetEvent};
-use crate::ui::UserOutput;
 use crate::ui::line::RawLines;
+use crate::ui::UserOutput;
 use crossbeam_channel::{unbounded, Sender};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::time::Duration;
@@ -236,7 +236,6 @@ impl RuntimeOutputHandler for Server {
                     }
                 }
             }
-            RuntimeOutput::ImmediateAction(action) => unreachable!("action '{:?}' should not be passed to server handler", action),
         }
         Ok(NextStep::Run)
     }

@@ -1,7 +1,7 @@
 use crate::error::Result;
-use crate::runtime::{RuntimeOutputHandler, Runtime};
-use crate::ui::UserOutput;
+use crate::runtime::{Runtime, RuntimeOutputHandler};
 use crate::ui::line::RawLine;
+use crate::ui::UserOutput;
 use crossbeam_channel::Receiver;
 use std::net::{SocketAddr, TcpStream};
 use termion::event::{Key, MouseEvent};
@@ -47,7 +47,6 @@ pub enum Event {
     // terminal mouse event
     TerminalMouse(MouseEvent),
 }
-
 
 /// 事件回调
 pub trait EventHandler {
@@ -113,4 +112,3 @@ where
         Ok(())
     }
 }
-

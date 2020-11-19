@@ -1,19 +1,21 @@
 pub mod alias;
 pub mod model;
+pub mod queue;
 pub mod sub;
 pub mod timer;
 pub mod trigger;
-pub mod queue;
 
 use crate::codec::{Codec, MudCodec};
 use crate::conf;
 use crate::error::{Error, Result};
 use crate::event::{Event, NextStep};
-use crate::ui::UserOutput;
 use crate::ui::line::{RawLine, RawLines};
 use crate::ui::style::{Color, Style};
+use crate::ui::UserOutput;
+use alias::{Alias, AliasFlags, AliasModel, Aliases};
 use crossbeam_channel::Sender;
 use mlua::Lua;
+use queue::OutputQueue;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
@@ -24,28 +26,31 @@ use std::io::Write;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use sub::{Sub, SubParser};
-use alias::{Alias, Aliases, AliasModel, AliasFlags};
-use queue::OutputQueue;
 use uuid::Uuid;
 
 /// 运行时事件，进由运行时进行处理
 ///
 /// 这些事件是由外部事件派生或由脚本运行生成出来
 #[derive(Debug, Clone, PartialEq)]
-pub enum  RuntimeOutput {
+pub enum RuntimeEvent {
+    Output(RuntimeOutput),
+    /// 运行时操作
+    ImmediateAction(RuntimeAction),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuntimeOutput {
     /// switch codec for both encoding and decoding
     // SwitchCodec(Codec),
     /// string which is to be sent to server
     ToServer(String),
     /// lines from server or script to display
     ToUI(RawLines),
-    /// 运行时操作
-    ImmediateAction(RuntimeAction),
 }
 
 /// 运行时事件回调
 pub trait RuntimeOutputHandler {
-    fn on_runtime_output(&mut self, evt: RuntimeOutput, rt: &mut Runtime) -> Result<NextStep>;
+    fn on_runtime_output(&mut self, output: RuntimeOutput, rt: &mut Runtime) -> Result<NextStep>;
 }
 
 /// 运行时操作
@@ -53,6 +58,7 @@ pub trait RuntimeOutputHandler {
 pub enum RuntimeAction {
     SwitchCodec(Codec),
     CreateAlias(Alias),
+    DeleteAlias(String),
 }
 
 /// 脚本环境中的变量存储和查询
@@ -103,6 +109,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    /// 创建运行时
     pub fn new(evttx: Sender<Event>, config: &conf::Config) -> Self {
         Self {
             evttx,
@@ -120,10 +127,12 @@ impl Runtime {
         }
     }
 
+    /// 设置日志输出
     pub fn set_logger(&mut self, logger: File) {
         self.logger = Some(logger);
     }
 
+    // 向UI线程推送文字
     pub fn push_line_to_ui(&mut self, line: RawLine) {
         self.queue.push_line(line);
     }
@@ -142,8 +151,9 @@ impl Runtime {
 
     /// 执行别名回调
     pub fn exec_alias(&self, name: String, text: String) -> Result<()> {
-        let alias = self.aliases.get(&name)
-            .ok_or_else(|| Error::RuntimeError(format!("alias '{}' mismatch with text '{}'", &name, &text)))?;
+        let alias = self.aliases.get(&name).ok_or_else(|| {
+            Error::RuntimeError(format!("alias '{}' mismatch with text '{}'", &name, &text))
+        })?;
         let wildcards = alias.captures(&text)?;
         let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_ALIAS_CALLBACKS)?;
         let func: mlua::Function = callbacks.get(&alias.model.name[..])?;
@@ -152,10 +162,25 @@ impl Runtime {
     }
 
     /// 创建别名
-    pub fn create_alias(&mut self, alias: Alias) -> Result<()> {
+    fn create_alias(&mut self, alias: Alias) -> std::result::Result<(), Alias> {
         self.aliases.add(alias)
     }
 
+    /// 删除别名回调：回调注册在Lua全局回调表中
+    fn delete_alias_callback(&mut self, name: &str) -> Result<()> {
+        let alias_callbacks: mlua::Table = self.lua.globals().get(GLOBAL_ALIAS_CALLBACKS)?;
+        alias_callbacks.set(name, mlua::Value::Nil)?;
+        Ok(())
+    }
+
+    // 删除别名
+    fn delete_alias(&mut self, name: &str) -> Result<()> {
+        self.delete_alias_callback(name)?;
+        self.aliases.remove(name);
+        Ok(())
+    }
+
+    /// 处理用户输出：命名参考MUSHClient
     pub fn process_user_output(&mut self, output: UserOutput) {
         match output {
             UserOutput::Script(script) => self.process_user_script(script),
@@ -163,6 +188,7 @@ impl Runtime {
         }
     }
 
+    /// 处理用户命令，拆分并做别名转换
     fn process_user_cmd(&mut self, mut cmd: String) {
         // todo: might be other built-in command
         if cmd.ends_with("\r\n") {
@@ -184,7 +210,7 @@ impl Runtime {
                     }
                     self.queue.push_cmd(s);
                 }
-                PostCmd::Alias{name, text} => {
+                PostCmd::Alias { name, text } => {
                     if let Err(e) = self.exec_alias(name, text) {
                         let err = format_err(e.to_string());
                         self.queue.push_line(RawLine::fmt_err(err));
@@ -194,6 +220,7 @@ impl Runtime {
         }
     }
 
+    /// 处理用户脚本
     fn process_user_script(&mut self, script: String) {
         if let Err(e) = self.exec_script(&script) {
             let err = format_err(e.to_string());
@@ -202,7 +229,7 @@ impl Runtime {
     }
 
     pub fn process_world_line(&mut self, line: RawLine) {
-        // todo: apply triggers here
+        // todo: 需要提前处理文字格式，以便于触发器使用
         self.queue.push_line(line);
     }
 
@@ -238,34 +265,66 @@ impl Runtime {
         Ok(())
     }
 
+    /// 处理队列中的事件：循环处理直到队列中不再存在操作型事件
     pub fn process_queue(&mut self) -> Vec<RuntimeOutput> {
-        let queued = self.queue.drain_all();
-        for output in queued {
-            match output {
-                RuntimeOutput::ImmediateAction(action) => self.process_runtime_action(action),
-                other => self.queue.push(other),
+        let mut iter_count = 50;
+        while iter_count > 0 {
+            let mut action_exists = false;
+            let queued = self.queue.drain_all();
+            for output in queued {
+                match output {
+                    RuntimeEvent::ImmediateAction(action) => {
+                        action_exists = true;
+                        self.process_runtime_action(action);
+                    }
+                    other => self.queue.push(other),
+                }
             }
+            if !action_exists {
+                return self
+                    .queue
+                    .drain_all()
+                    .into_iter()
+                    .filter_map(|e| match e {
+                        RuntimeEvent::Output(output) => Some(output),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            iter_count -= 1;
         }
-        self.queue.drain_all()
+        // todo: 需要处理优雅关闭（UI提示用户进行主动关闭）
+        log::error!("exceeds limit of 50 iterations on runtime event queue");
+        self.evttx.send(Event::Quit).unwrap();
+        vec![]
     }
 
-    pub fn process_runtime_action(&mut self, action: RuntimeAction) {
+    /// 处理操作型事件
+    fn process_runtime_action(&mut self, action: RuntimeAction) {
         match action {
             RuntimeAction::SwitchCodec(code) => {
                 self.mud_codec.switch_codec(code);
             }
             RuntimeAction::CreateAlias(alias) => {
-                // todo: should be executed before IO queue
+                let name = alias.model.name.to_owned();
+                if let Err(alias) = self.create_alias(alias) {
+                    self.push_line_to_ui(RawLine::fmt_err(format!("创建别名失败：{:?}", alias)));
+                    // 注销回调函数，忽略错误
+                    if let Err(e) = self.delete_alias_callback(&name) {
+                        log::warn!("delete alias callback error {}", e);
+                    }
+                }
+            }
+            RuntimeAction::DeleteAlias(name) => {
+                if let Err(e) = self.delete_alias(&name) {
+                    log::warn!("delete alias error {}", e);
+                }
             }
         }
     }
 
-    fn translate_cmds(
-        &self,
-        cmd: String,
-        delim: char,
-        send_empty_cmd: bool,
-    ) -> Vec<PostCmd> {
+    /// 改写命令，根据换行与分隔符切分命名，并进行别名匹配与替换
+    fn translate_cmds(&self, cmd: String, delim: char, send_empty_cmd: bool) -> Vec<PostCmd> {
         if cmd.is_empty() {
             return vec![];
         }
@@ -286,7 +345,7 @@ impl Runtime {
                     alias.model.name,
                     alias.model.pattern
                 );
-                cmds.push(PostCmd::Alias{
+                cmds.push(PostCmd::Alias {
                     name: alias.model.name.clone(),
                     text: raw_line,
                 })
@@ -298,7 +357,7 @@ impl Runtime {
     }
 
     /// 初始化运行时
-    /// 
+    ///
     /// 1. 定义全局变量表，Lua脚本通过SetVariable()和GetVariable()函数
     ///    对其中的值进行设置和查询
     /// 2. 定义Lua脚本引擎中的的核心函数
@@ -340,7 +399,9 @@ impl Runtime {
                 "big5" => Codec::Big5,
                 _ => return Ok(()),
             };
-            queue.push(RuntimeOutput::ImmediateAction(RuntimeAction::SwitchCodec(new_code)));
+            queue.push(RuntimeEvent::ImmediateAction(RuntimeAction::SwitchCodec(
+                new_code,
+            )));
             Ok(())
         })?;
         globals.set("SwitchCodec", switch_codec)?;
@@ -387,32 +448,72 @@ impl Runtime {
             Ok(id.to_simple().to_string())
         })?;
         globals.set("GetUniqueID", get_unique_id)?;
-        
+
+        // 全局回调注册表
+        let alias_callbacks = self.lua.create_table()?;
+        self.lua
+            .globals()
+            .set(GLOBAL_ALIAS_CALLBACKS, alias_callbacks)?;
+
         // 初始化CreateAlias函数
         let queue = self.queue.clone();
-        let create_alias = self.lua.create_function(move |lua, (name, group, pattern, func, flags): (String, String, String, mlua::Function, u16)| {
-            if pattern.is_empty() {
-                return Err(mlua::Error::external(Error::RuntimeError("empty pattern not allowed when creating alias".to_owned())));
-            }
-            let flags = AliasFlags::from_bits(flags)
-                .ok_or_else(|| mlua::Error::external(Error::RuntimeError(format!("invalid alias flags {}", flags))))?;
+        let create_alias = self.lua.create_function(
+            move |lua,
+                  (name, group, pattern, func, flags): (
+                String,
+                String,
+                String,
+                mlua::Function,
+                u16,
+            )| {
+                if pattern.is_empty() {
+                    return Err(mlua::Error::external(Error::RuntimeError(
+                        "empty pattern not allowed when creating alias".to_owned(),
+                    )));
+                }
+                let flags = AliasFlags::from_bits(flags).ok_or_else(|| {
+                    mlua::Error::external(Error::RuntimeError(format!(
+                        "invalid alias flags {}",
+                        flags
+                    )))
+                })?;
 
-            let alias_callbacks: mlua::Table = lua.globals().get(GLOBAL_ALIAS_CALLBACKS)?;
-            if alias_callbacks.contains_key(name.to_owned())? {
-                return Err(mlua::Error::external(Error::RuntimeError(format!("alias callback '{}' already exists", &name))));
-            }
-            let model = AliasModel{name, group, pattern, extra: flags};
-            let alias = model.compile()
-                .map_err(|e| mlua::Error::external(e))?;
-            // 此处可以直接向Lua表中添加回调，因为：
-            // 1. mlua::Function与Lua运行时同生命周期，不能在EventQueue中传递
-            // 2. 需保证在下次检验名称时若重名则失败
-            // 重要：在处理RuntimAction时，需清理曾添加的回调函数
-            alias_callbacks.set(alias.model.name.to_owned(), func)?;
-            queue.push(RuntimeOutput::ImmediateAction(RuntimeAction::CreateAlias(alias)));
+                let alias_callbacks: mlua::Table = lua.globals().get(GLOBAL_ALIAS_CALLBACKS)?;
+                if alias_callbacks.contains_key(name.to_owned())? {
+                    return Err(mlua::Error::external(Error::RuntimeError(format!(
+                        "alias callback '{}' already exists",
+                        &name
+                    ))));
+                }
+                let model = AliasModel {
+                    name,
+                    group,
+                    pattern,
+                    extra: flags,
+                };
+                let alias = model.compile().map_err(|e| mlua::Error::external(e))?;
+                // 此处可以直接向Lua表中添加回调，因为：
+                // 1. mlua::Function与Lua运行时同生命周期，不能在EventQueue中传递
+                // 2. 需保证在下次检验名称时若重名则失败
+                // 重要：在处理RuntimAction时，需清理曾添加的回调函数
+                alias_callbacks.set(alias.model.name.to_owned(), func)?;
+                queue.push(RuntimeEvent::ImmediateAction(RuntimeAction::CreateAlias(
+                    alias,
+                )));
+                Ok(())
+            },
+        )?;
+        globals.set("CreateAlias", create_alias)?;
+
+        // 初始化DeleteAlias函数
+        let queue = self.queue.clone();
+        let delete_alias = self.lua.create_function(move |_, (name,): (String,)| {
+            queue.push(RuntimeEvent::ImmediateAction(RuntimeAction::DeleteAlias(
+                name,
+            )));
             Ok(())
         })?;
-        globals.set("CreateAlias", create_alias)?;
+        globals.set("DeleteAlias", delete_alias)?;
         Ok(())
     }
 }
@@ -460,10 +561,7 @@ impl FromStr for Scripts {
 }
 
 /// 编译匹配及运行脚本
-fn compile_pattern(
-    pattern: &str,
-    match_lines: usize,
-) -> Result<Regex> {
+fn compile_pattern(pattern: &str, match_lines: usize) -> Result<Regex> {
     if pattern.is_empty() {
         return Err(Error::RuntimeError(
             "The match_text cannot be empty".to_owned(),
@@ -491,10 +589,7 @@ pub enum Target {
 #[derive(Debug, Clone)]
 pub enum PostCmd {
     Raw(String),
-    Alias{
-        name: String,
-        text: String,
-    },
+    Alias { name: String, text: String },
 }
 
 fn match_aliases<'a>(input: &str, aliases: &'a [Alias]) -> Option<&'a Alias> {
@@ -506,11 +601,10 @@ fn match_aliases<'a>(input: &str, aliases: &'a [Alias]) -> Option<&'a Alias> {
     None
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossbeam_channel::{Receiver, unbounded};
+    use crossbeam_channel::{unbounded, Receiver};
 
     #[test]
     fn test_process_single_user_cmd() {
@@ -539,10 +633,11 @@ mod tests {
     #[test]
     fn test_process_single_alias() {
         let (mut rt, _) = new_runtime().unwrap();
+        // todo
     }
 
-    fn assert_eq_str(expect: impl AsRef<str>, actual: RuntimeOutput) {
-        let expect = RuntimeOutput::ToServer(expect.as_ref().to_owned());
+    fn assert_eq_str(expect: impl AsRef<str>, actual: RuntimeEvent) {
+        let expect = RuntimeEvent::Output(RuntimeOutput::ToServer(expect.as_ref().to_owned()));
         assert_eq!(expect, actual);
     }
 

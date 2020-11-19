@@ -2,7 +2,7 @@ use crate::conf;
 use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::protocol::Packet;
-use crate::runtime::{Runtime, RuntimeAction, RuntimeOutput, RuntimeOutputHandler};
+use crate::runtime::{Runtime, RuntimeEvent, RuntimeOutput, RuntimeOutputHandler};
 use crate::signal;
 use crate::ui::line::RawLine;
 use crate::ui::{Screen, UIEvent};
@@ -166,7 +166,7 @@ impl EventHandler for Client {
 }
 
 impl RuntimeOutputHandler for Client {
-    fn on_runtime_output(&mut self, output: RuntimeOutput, rt: &mut Runtime) -> Result<NextStep> {
+    fn on_runtime_output(&mut self, output: RuntimeOutput, _rt: &mut Runtime) -> Result<NextStep> {
         match output {
             RuntimeOutput::ToServer(mut s) => {
                 if !s.ends_with('\n') {
@@ -177,7 +177,6 @@ impl RuntimeOutputHandler for Client {
             RuntimeOutput::ToUI(lines) => {
                 self.uitx.send(UIEvent::Lines(lines.into_vec()))?;
             }
-            RuntimeOutput::ImmediateAction(action) => unreachable!("action '{:?}' should not be passed to client handler", action),
         }
         Ok(NextStep::Run)
     }

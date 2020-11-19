@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
+use mlua::ToLua;
 use regex::Regex;
 use std::collections::HashMap;
-use mlua::ToLua;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model<X> {
@@ -12,7 +12,6 @@ pub struct Model<X> {
 }
 
 impl<X: std::fmt::Debug> Model<X> {
-
     pub fn compile(self) -> Result<ModelExec<Self>> {
         let re = Regex::new(&self.pattern)?;
         Ok(ModelExec::new(self, re))
@@ -20,7 +19,6 @@ impl<X: std::fmt::Debug> Model<X> {
 }
 
 pub trait ModelExtra {
-
     fn enabled(&self) -> bool;
 
     fn set_enabled(&mut self, enabled: bool);
@@ -45,19 +43,18 @@ impl<M: PartialEq> PartialEq for ModelExec<M> {
 
 impl<X: std::fmt::Debug> ModelExec<Model<X>> {
     pub fn new(model: Model<X>, re: Regex) -> Self {
-        Self {
-            model,
-            re,
-        }
+        Self { model, re }
     }
 
     pub fn is_match(&self, input: impl AsRef<str>) -> bool {
         self.re.is_match(input.as_ref())
     }
 
-    // todo: 增加style的捕获    
+    // todo: 增加style的捕获
     pub fn captures(&self, input: impl AsRef<str>) -> Result<ModelCaptures> {
-        let captures = self.re.captures(input.as_ref())
+        let captures = self
+            .re
+            .captures(input.as_ref())
             .ok_or_else(|| Error::RuntimeError(format!("mismatch alias {:?}", self.model)))?;
         let mut names = self.re.capture_names().skip(1);
         let mut mapping = HashMap::new();
@@ -81,7 +78,6 @@ pub enum NumberOrString {
 }
 
 impl NumberOrString {
-
     pub fn new_string(s: impl Into<String>) -> Self {
         Self::String(s.into())
     }
@@ -110,14 +106,12 @@ impl<'lua> ToLua<'lua> for ModelCaptures {
 #[derive(Debug)]
 pub struct MapModelStore<M>(HashMap<String, M>);
 
-
 #[derive(Debug)]
 pub struct VecModelStore<ME> {
     arr: Vec<ME>,
 }
 
 impl<X: ModelExtra> AsRef<[ModelExec<Model<X>>]> for VecModelStore<ModelExec<Model<X>>> {
-
     fn as_ref(&self) -> &[ModelExec<Model<X>>] {
         self.arr.as_ref()
     }
@@ -128,7 +122,8 @@ impl<X: ModelExtra> VecModelStore<ModelExec<Model<X>>> {
         Self { arr: Vec::new() }
     }
 
-    pub fn add(&mut self, me: ModelExec<Model<X>>) -> Result<()> {
+    /// 添加模型，出错则返回原值
+    pub fn add(&mut self, me: ModelExec<Model<X>>) -> std::result::Result<(), ModelExec<Model<X>>> {
         let opt = if me.model.name.is_empty() {
             None
         } else {
@@ -137,9 +132,7 @@ impl<X: ModelExtra> VecModelStore<ModelExec<Model<X>>> {
         match opt {
             None => self.arr.push(me),
             Some(_) => {
-                return Err(Error::RuntimeError(
-                    "A trigger of that name already exists".to_owned(),
-                ))
+                return Err(me);
             }
         }
         Ok(())

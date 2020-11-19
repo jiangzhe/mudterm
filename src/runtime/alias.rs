@@ -10,6 +10,7 @@ pub type AliasModel = Model<AliasFlags>;
 bitflags! {
     pub struct AliasFlags: u16 {
         const ENABLED = 0x0001;
+        // todo: 实现嵌套别名
         const KEEP_EVALUATING = 0x0008;
     }
 }
@@ -41,7 +42,6 @@ impl ModelExtra for AliasFlags {
 }
 
 impl AliasModel {
-
     pub fn enabled(&self) -> bool {
         self.extra.contains(AliasFlags::ENABLED)
     }

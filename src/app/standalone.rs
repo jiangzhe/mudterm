@@ -81,7 +81,6 @@ impl RuntimeOutputHandler for Standalone {
             RuntimeOutput::ToUI(lines) => {
                 self.uitx.send(UIEvent::Lines(lines.into_vec()))?;
             }
-            RuntimeOutput::ImmediateAction(action) => unreachable!("action '{:?}' should not be passed to standalone handler", action),
         }
         Ok(NextStep::Run)
     }

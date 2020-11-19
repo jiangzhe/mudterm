@@ -3,8 +3,8 @@ use crate::ui::buffer::Buffer;
 use crate::ui::layout::Rect;
 use crate::ui::style::{Color, Style};
 use crate::ui::widget::{Block, Widget};
-use crate::ui::UserOutput;
 use crate::ui::width::AppendWidthTab8;
+use crate::ui::UserOutput;
 use std::collections::VecDeque;
 
 /// currently only support cjk mode

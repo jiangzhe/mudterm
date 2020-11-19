@@ -57,7 +57,7 @@ impl ModelExtra for TriggerExtra {
 
 impl TriggerExtra {
     fn new() -> Self {
-        Self{
+        Self {
             match_lines: 1,
             flags: TriggerFlags::empty(),
         }
@@ -106,27 +106,33 @@ mod tests {
     #[test]
     fn test_trigger_match() {
         let input = "你一觉醒来觉得精力充沛。";
-        let tr = TriggerModel{
+        let tr = TriggerModel {
             name: "t1".into(),
             pattern: "^你一觉醒来.*".into(),
             group: "default".into(),
             extra: TriggerExtra::new(),
-        }.compile().unwrap();
+        }
+        .compile()
+        .unwrap();
         assert!(tr.is_match(input));
-        let tr = TriggerModel{
+        let tr = TriggerModel {
             name: "t2".into(),
             pattern: "^(.*)一觉(.*)来.*".into(),
             group: "default".into(),
             extra: TriggerExtra::new(),
-        }.compile().unwrap();
+        }
+        .compile()
+        .unwrap();
         assert!(tr.is_match(input));
         let input = "100/200\n300/400";
-        let tr = TriggerModel{
+        let tr = TriggerModel {
             name: "t3".into(),
             pattern: "^(\\d+)/\\d+\n(\\d+)/\\d+$".into(),
             group: "default".into(),
             extra: TriggerExtra::new(),
-        }.compile().unwrap();
+        }
+        .compile()
+        .unwrap();
         assert!(tr.is_match(input));
     }
 }
