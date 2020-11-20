@@ -11,12 +11,12 @@ pub struct Model<X> {
     pub extra: X,
 }
 
-impl<X: std::fmt::Debug> Model<X> {
-    pub fn compile(self) -> Result<ModelExec<Self>> {
-        let re = Regex::new(&self.pattern)?;
-        Ok(ModelExec::new(self, re))
-    }
-}
+// impl<X: std::fmt::Debug> Model<X> {
+//     pub fn compile(self) -> Result<ModelExec<Self>> {
+//         let re = Regex::new(&self.pattern)?;
+//         Ok(ModelExec::new(self, re))
+//     }
+// }
 
 pub trait ModelExtra {
     fn enabled(&self) -> bool;

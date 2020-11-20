@@ -88,6 +88,18 @@ impl CacheText {
         Some(&self.text[rawlen - nlen..])
     }
 
+    pub fn lastn_trimmed(&self, n: usize) -> Option<&str> {
+        self.lastn(n).map(|s| {
+            if s.ends_with("\r\n") {
+                &s[..s.len()-2]
+            } else if s.ends_with('\n') {
+                &s[..s.len()-1]
+            } else {
+                s
+            }
+        })
+    }
+
     // 获取最后一行文本
     pub fn last(&self) -> Option<(&str, &[InlineStyle])> {
         match self.meta.back() {

@@ -1,6 +1,9 @@
 use crate::runtime::cache::{CacheText, InlineStyle};
 use crate::runtime::model::{MapModelStore, Model, ModelExec, ModelExtra};
+use crate::error::Result;
 use bitflags::bitflags;
+use regex::Regex;
+use std::borrow::Cow;
 
 pub type Triggers = MapModelStore<Trigger>;
 
@@ -24,7 +27,7 @@ impl Trigger {
     // /// 针对多行匹配进行处理
     pub fn match_trigger(&self, text: &CacheText) -> Option<(&Trigger, String, Vec<InlineStyle>)> {
         if self.model.extra.match_lines > 1 {
-            if let Some(multilines) = text.lastn(self.model.extra.match_lines as usize) {
+            if let Some(multilines) = text.lastn_trimmed(self.model.extra.match_lines as usize) {
                 if self.is_match(multilines) {
                     return Some((self, multilines.to_owned(), vec![]));
                 }
@@ -41,6 +44,25 @@ impl Trigger {
 }
 
 pub type TriggerModel = Model<TriggerExtra>;
+
+impl TriggerModel {
+    pub fn compile(self) -> Result<Trigger> {
+        let pattern = if self.extra.match_lines > 1 {
+            if self.pattern.starts_with("(?m)") {
+                Cow::Borrowed(&self.pattern[..])
+            } else {
+                let mut s = String::new();
+                s.push_str("(?m)");
+                s.push_str(&self.pattern);
+                Cow::Owned(s)
+            }
+        } else {
+            Cow::Borrowed(&self.pattern[..])
+        };
+        let re = Regex::new(&pattern)?;
+        Ok(Trigger::new(self, re))
+    }
+}
 
 bitflags! {
     pub struct TriggerFlags: u16 {
@@ -60,7 +82,7 @@ bitflags! {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TriggerExtra {
-    pub match_lines: u32,
+    pub match_lines: u8,
     pub flags: TriggerFlags,
 }
 
