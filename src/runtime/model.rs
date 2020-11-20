@@ -2,7 +2,6 @@ use crate::error::{Error, Result};
 use mlua::ToLua;
 use regex::Regex;
 use std::collections::HashMap;
-use std::slice::Iter;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model<X> {
@@ -53,10 +52,12 @@ impl<X> ModelExec<Model<X>> {
 
     // todo: 增加style的捕获
     pub fn captures(&self, input: impl AsRef<str>) -> Result<ModelCaptures> {
-        let captures = self
-            .re
-            .captures(input.as_ref())
-            .ok_or_else(|| Error::RuntimeError(format!("mismatch alias[name={}, pattern={}]", &self.model.name, &self.model.pattern)))?;
+        let captures = self.re.captures(input.as_ref()).ok_or_else(|| {
+            Error::RuntimeError(format!(
+                "mismatch alias[name={}, pattern={}]",
+                &self.model.name, &self.model.pattern
+            ))
+        })?;
         let mut names = self.re.capture_names().skip(1).fuse();
         let mut mapping = HashMap::new();
         let mut captures = captures.iter().enumerate().skip(1);
@@ -107,32 +108,139 @@ impl<'lua> ToLua<'lua> for ModelCaptures {
     }
 }
 
-#[derive(Debug)]
-pub struct MapModelStore<M>(HashMap<String, M>);
+pub trait ModelStore<X>
+where
+    X: ModelExtra,
+{
+    /// 添加模型，出错则返回原值
+    fn add(&mut self, me: ModelExec<Model<X>>) -> std::result::Result<(), ModelExec<Model<X>>>;
 
-#[derive(Debug)]
-pub struct VecModelStore<ME> {
-    arr: Vec<ME>,
+    /// 删除模型
+    fn remove(&mut self, name: impl AsRef<str>) -> Option<ModelExec<Model<X>>>;
+
+    /// 启用模型
+    fn enable(&mut self, name: impl AsRef<str>, enabled: bool) -> Option<&ModelExec<Model<X>>>;
+
+    /// 禁用模型
+    fn enable_group(&mut self, group: impl AsRef<str>, enabled: bool) -> usize;
+
+    /// 查询单个模型
+    fn get(&self, name: impl AsRef<str>) -> Option<&ModelExec<Model<X>>>;
+
+    /// 查询单个模型，可修改
+    fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut ModelExec<Model<X>>>;
+
+    /// 模型数目
+    fn len(&self) -> usize;
+
+    /// 匹配输出第一个匹配到的模型
+    fn match_first(&self, input: impl AsRef<str>) -> Option<&ModelExec<Model<X>>>;
+
+    /// 输出所有匹配成功的模型
+    fn match_all(&self, input: impl AsRef<str>) -> Vec<&ModelExec<Model<X>>>;
 }
 
-impl<X: ModelExtra> VecModelStore<ModelExec<Model<X>>> {
+#[derive(Debug)]
+pub struct MapModelStore<M>(pub(crate) HashMap<String, M>);
+
+impl<X> MapModelStore<ModelExec<Model<X>>> {
     pub fn new() -> Self {
-        Self { arr: Vec::new() }
+        Self(HashMap::new())
+    }
+}
+
+impl<X: ModelExtra> ModelStore<X> for MapModelStore<ModelExec<Model<X>>> {
+    fn add(&mut self, me: ModelExec<Model<X>>) -> std::result::Result<(), ModelExec<Model<X>>> {
+        if self.0.contains_key(&me.model.name) {
+            return Err(me);
+        }
+        self.0.insert(me.model.name.to_owned(), me);
+        Ok(())
     }
 
-    pub fn iter(&self) -> Iter<ModelExec<Model<X>>> {
-        self.arr.iter()
+    fn remove(&mut self, name: impl AsRef<str>) -> Option<ModelExec<Model<X>>> {
+        self.0.remove(name.as_ref())
     }
 
-    /// 添加模型，出错则返回原值
-    pub fn add(&mut self, me: ModelExec<Model<X>>) -> std::result::Result<(), ModelExec<Model<X>>> {
+    fn enable(&mut self, name: impl AsRef<str>, enabled: bool) -> Option<&ModelExec<Model<X>>> {
+        if let Some(me) = self.get_mut(name.as_ref()) {
+            me.model.extra.set_enabled(enabled);
+            return Some(me);
+        }
+        None
+    }
+
+    fn enable_group(&mut self, group: impl AsRef<str>, enabled: bool) -> usize {
+        let group = group.as_ref();
+        let mut n = 0;
+        for me in self.0.values_mut() {
+            if group == me.model.group {
+                me.model.extra.set_enabled(enabled);
+                n += 1;
+            }
+        }
+        n
+    }
+
+    fn get(&self, name: impl AsRef<str>) -> Option<&ModelExec<Model<X>>> {
+        self.0.get(name.as_ref())
+    }
+
+    fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut ModelExec<Model<X>>> {
+        self.0.get_mut(name.as_ref())
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn match_first(&self, input: impl AsRef<str>) -> Option<&ModelExec<Model<X>>> {
+        for me in self.0.values() {
+            if me.model.extra.enabled() && me.is_match(&input) {
+                return Some(me);
+            }
+        }
+        None
+    }
+
+    fn match_all(&self, input: impl AsRef<str>) -> Vec<&ModelExec<Model<X>>> {
+        let mut rs = vec![];
+        for me in self.0.values() {
+            if me.model.extra.enabled() && me.is_match(&input) {
+                rs.push(me);
+            }
+        }
+        rs
+    }
+}
+
+#[derive(Debug)]
+pub struct VecModelStore<ME>(pub(crate) Vec<ME>);
+
+impl<X> VecModelStore<ModelExec<Model<X>>> {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    #[inline]
+    fn get_idx(&self, name: impl AsRef<str>) -> Option<usize> {
+        let name = name.as_ref();
+        if name.is_empty() {
+            return None;
+        }
+        self.0.iter().position(|me| &me.model.name == name)
+    }
+}
+
+impl<X: ModelExtra> ModelStore<X> for VecModelStore<ModelExec<Model<X>>> {
+    fn add(&mut self, me: ModelExec<Model<X>>) -> std::result::Result<(), ModelExec<Model<X>>> {
         let opt = if me.model.name.is_empty() {
             None
         } else {
             self.get(&me.model.name)
         };
         match opt {
-            None => self.arr.push(me),
+            None => self.0.push(me),
             Some(_) => {
                 return Err(me);
             }
@@ -140,18 +248,18 @@ impl<X: ModelExtra> VecModelStore<ModelExec<Model<X>>> {
         Ok(())
     }
 
-    pub fn remove(&mut self, name: impl AsRef<str>) -> Option<ModelExec<Model<X>>> {
+    fn remove(&mut self, name: impl AsRef<str>) -> Option<ModelExec<Model<X>>> {
         let name = name.as_ref();
         if name.is_empty() {
             return None;
         }
         match self.get_idx(name) {
             None => None,
-            Some(idx) => Some(self.arr.swap_remove(idx)),
+            Some(idx) => Some(self.0.swap_remove(idx)),
         }
     }
 
-    pub fn enable(&mut self, name: impl AsRef<str>, enabled: bool) -> Option<&ModelExec<Model<X>>> {
+    fn enable(&mut self, name: impl AsRef<str>, enabled: bool) -> Option<&ModelExec<Model<X>>> {
         let name = name.as_ref();
         if name.is_empty() {
             return None;
@@ -165,13 +273,13 @@ impl<X: ModelExtra> VecModelStore<ModelExec<Model<X>>> {
         }
     }
 
-    pub fn enable_group(&mut self, group: impl AsRef<str>, enabled: bool) -> usize {
+    fn enable_group(&mut self, group: impl AsRef<str>, enabled: bool) -> usize {
         let group = group.as_ref();
         if group.is_empty() {
             return 0;
         }
         let mut n = 0;
-        for me in self.arr.iter_mut() {
+        for me in self.0.iter_mut() {
             if &me.model.group == group {
                 me.model.extra.set_enabled(enabled);
                 n += 1;
@@ -180,29 +288,28 @@ impl<X: ModelExtra> VecModelStore<ModelExec<Model<X>>> {
         n
     }
 
-    pub fn get(&self, name: impl AsRef<str>) -> Option<&ModelExec<Model<X>>> {
+    fn get(&self, name: impl AsRef<str>) -> Option<&ModelExec<Model<X>>> {
         let name = name.as_ref();
         if name.is_empty() {
             return None;
         }
-        self.arr.iter().find(|me| &me.model.name == name)
+        self.0.iter().find(|me| &me.model.name == name)
     }
 
-    pub fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut ModelExec<Model<X>>> {
+    fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut ModelExec<Model<X>>> {
         let name = name.as_ref();
         if name.is_empty() {
             return None;
         }
-        self.arr.iter_mut().find(|me| &me.model.name == name)
+        self.0.iter_mut().find(|me| &me.model.name == name)
     }
 
-    pub fn len(&self) -> usize {
-        self.arr.len()
+    fn len(&self) -> usize {
+        self.0.len()
     }
 
-    /// 匹配输出第一个匹配到的模型
-    pub fn match_first(&self, input: &str) -> Option<&ModelExec<Model<X>>> {
-        for me in &self.arr {
+    fn match_first(&self, input: impl AsRef<str>) -> Option<&ModelExec<Model<X>>> {
+        for me in &self.0 {
             if me.model.extra.enabled() && me.is_match(&input) {
                 return Some(me);
             }
@@ -210,23 +317,13 @@ impl<X: ModelExtra> VecModelStore<ModelExec<Model<X>>> {
         None
     }
 
-    /// 输出所有匹配成功的模型
-    pub fn match_any(&self, input: &str) -> Vec<&ModelExec<Model<X>>> {
+    fn match_all(&self, input: impl AsRef<str>) -> Vec<&ModelExec<Model<X>>> {
         let mut rs = vec![];
-        for me in &self.arr {
+        for me in &self.0 {
             if me.model.extra.enabled() && me.is_match(&input) {
                 rs.push(me);
             }
         }
         rs
-    }
-
-    #[inline]
-    fn get_idx(&self, name: impl AsRef<str>) -> Option<usize> {
-        let name = name.as_ref();
-        if name.is_empty() {
-            return None;
-        }
-        self.arr.iter().position(|me| &me.model.name == name)
     }
 }

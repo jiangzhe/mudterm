@@ -1,9 +1,44 @@
-use crate::runtime::model::{Model, ModelExec, ModelExtra, VecModelStore};
+use crate::runtime::cache::{CacheText, InlineStyle};
+use crate::runtime::model::{MapModelStore, Model, ModelExec, ModelExtra};
 use bitflags::bitflags;
 
-pub type Triggers = VecModelStore<TriggerExtra>;
+pub type Triggers = MapModelStore<Trigger>;
 
-pub type Trigger = ModelExec<TriggerExtra>;
+impl Triggers {
+    /// 匹配文本，返回匹配成功的触发器列表
+    ///
+    /// 与match_first不同之处在于支持多行匹配
+    pub fn trigger_first(&self, text: &CacheText) -> Option<(&Trigger, String, Vec<InlineStyle>)> {
+        for tr in self.0.values() {
+            if let Some(matches) = tr.match_trigger(text) {
+                return Some(matches);
+            }
+        }
+        None
+    }
+}
+
+pub type Trigger = ModelExec<TriggerModel>;
+
+impl Trigger {
+    // /// 针对多行匹配进行处理
+    pub fn match_trigger(&self, text: &CacheText) -> Option<(&Trigger, String, Vec<InlineStyle>)> {
+        if self.model.extra.match_lines > 1 {
+            if let Some(multilines) = text.lastn(self.model.extra.match_lines as usize) {
+                if self.is_match(multilines) {
+                    return Some((self, multilines.to_owned(), vec![]));
+                }
+            }
+        } else {
+            if let Some((line, styles)) = text.last_trimmed() {
+                if self.is_match(line) {
+                    return Some((self, line.to_owned(), styles.to_vec()));
+                }
+            }
+        }
+        None
+    }
+}
 
 pub type TriggerModel = Model<TriggerExtra>;
 
@@ -62,18 +97,16 @@ impl TriggerExtra {
             flags: TriggerFlags::empty(),
         }
     }
-}
 
-impl TriggerModel {
     pub fn one_shot(&self) -> bool {
-        self.extra.flags.contains(TriggerFlags::ONESHOT)
+        self.flags.contains(TriggerFlags::ONESHOT)
     }
 
     pub fn set_one_shot(&mut self, one_shot: bool) {
         if one_shot {
-            self.extra.flags.insert(TriggerFlags::ONESHOT);
+            self.flags.insert(TriggerFlags::ONESHOT);
         } else {
-            self.extra.flags.remove(TriggerFlags::ONESHOT);
+            self.flags.remove(TriggerFlags::ONESHOT);
         }
     }
 }

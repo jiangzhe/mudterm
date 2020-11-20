@@ -1,7 +1,7 @@
-use crate::runtime::model::{Model, ModelExec, ModelExtra, VecModelStore};
+use crate::runtime::model::{MapModelStore, Model, ModelExec, ModelExtra};
 use bitflags::bitflags;
 
-pub type Aliases = VecModelStore<Alias>;
+pub type Aliases = MapModelStore<Alias>;
 
 pub type Alias = ModelExec<AliasModel>;
 

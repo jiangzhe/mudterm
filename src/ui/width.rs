@@ -69,7 +69,7 @@ impl AppendWidthTab8 for Vec<Span> {
 
 impl AppendWidthTab8 for Line {
     fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
-        self.spans.append_width(prev_width, cjk)
+        self.spans().append_width(prev_width, cjk)
     }
 }
 
@@ -79,6 +79,12 @@ impl AppendWidthTab8 for UserOutput {
             Self::Cmd(s) => s.append_width(prev_width, cjk),
             Self::Script(s) => s.append_width(prev_width, cjk),
         }
+    }
+}
+
+impl<T: AppendWidthTab8> AppendWidthTab8 for [T] {
+    fn append_width(&self, prev_width: usize, cjk: bool) -> usize {
+        self.iter().fold(prev_width, |w, s| s.append_width(w, cjk))
     }
 }
 

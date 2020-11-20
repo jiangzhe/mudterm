@@ -121,21 +121,48 @@ impl RawLines {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Line {
-    pub spans: Vec<Span>,
+pub struct Lines(Vec<Line>);
+
+impl From<Vec<Line>> for Lines {
+    fn from(src: Vec<Line>) -> Self {
+        Self(src)
+    }
 }
+
+impl Lines {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn push_line(&mut self, line: Line) {
+        if let Some(last_line) = self.0.last_mut() {
+            if !last_line.ended() {
+                last_line.push_line(line);
+                return;
+            }
+        }
+        self.0.push(line);
+    }
+
+    pub fn into_vec(self) -> Vec<Line> {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Line(Vec<Span>);
 
 impl Line {
     pub fn new(spans: Vec<Span>) -> Self {
-        Self { spans }
+        Self(spans)
     }
 
     pub fn single(span: Span) -> Self {
-        Self { spans: vec![span] }
+        Self(vec![span])
     }
 
     pub fn ended(&self) -> bool {
-        self.spans
+        self.0
             .last()
             .map(|s| s.content.ends_with('\n'))
             .unwrap_or(false)
@@ -152,29 +179,46 @@ impl Line {
     }
 
     pub fn fmt_note(content: impl Into<String>) -> Self {
-        Self {
-            spans: vec![Span::fmt_note(content)],
-        }
+        Self(vec![Span::fmt_note(content)])
     }
 
     pub fn fmt_err(content: impl Into<String>) -> Self {
-        Self {
-            spans: vec![Span::fmt_err(content)],
-        }
+        Self(vec![Span::fmt_err(content)])
     }
 
     pub fn fmt_raw(content: impl Into<String>) -> Self {
-        Self {
-            spans: vec![Span::fmt_raw(content)],
-        }
+        Self(vec![Span::fmt_raw(content)])
+    }
+
+    pub fn fmt_with_style(content: impl Into<String>, style: Style) -> Self {
+        Self(vec![Span::fmt_with_style(content, style)])
     }
 
     pub fn push_span(&mut self, span: Span) -> bool {
         if self.ended() {
             return false;
         }
-        self.spans.push(span);
+        self.0.push(span);
         true
+    }
+
+    pub fn push_line(&mut self, line: Line) {
+        if self.ended() {
+            return;
+        }
+        for span in line.0 {
+            if !self.push_span(span) {
+                return;
+            }
+        }
+    }
+
+    pub fn spans(&self) -> &[Span] {
+        &self.0
+    }
+
+    pub fn into_spans(self) -> Vec<Span> {
+        self.0
     }
 }
 
@@ -219,12 +263,12 @@ impl WrapLine {
 /// 根据指定行宽将单行拆解为多行，并添加到可变数组中
 pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>) {
     let mut curr_line = if lines.last().map(|l| !l.ended()).unwrap_or(false) {
-        lines.pop().unwrap().spans
+        lines.pop().unwrap().into_spans()
     } else {
         Vec::new()
     };
     let mut curr_width = curr_line.append_width(0, cjk);
-    for span in &line.spans {
+    for span in line.spans() {
         // 判断宽度是否超过限制
         let next_width = span.append_width(curr_width, cjk);
         if next_width <= max_width {

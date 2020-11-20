@@ -1,7 +1,7 @@
 use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::runtime::{Runtime, RuntimeOutput, RuntimeOutputHandler};
-use crate::ui::line::RawLine;
+use crate::ui::line::Line;
 use crate::ui::UIEvent;
 use crossbeam_channel::Sender;
 use std::thread;
@@ -54,7 +54,7 @@ impl EventHandler for Standalone {
             Event::WorldDisconnected => {
                 log::error!("world down or not reachable");
                 // let user quit
-                rt.push_line_to_ui(RawLine::fmt_err("与服务器断开了连接，请关闭并重新连接"));
+                rt.push_line_to_ui(Line::fmt_err("与服务器断开了连接，请关闭并重新连接"));
             }
             // standalone模式不支持客户端连接，待增强
             Event::NewClient(..)
@@ -78,8 +78,8 @@ impl RuntimeOutputHandler for Standalone {
                 let bs = rt.encode(&s)?;
                 self.worldtx.send(bs)?;
             }
-            RuntimeOutput::ToUI(lines) => {
-                self.uitx.send(UIEvent::Lines(lines.into_vec()))?;
+            RuntimeOutput::ToUI(_, styled) => {
+                self.uitx.send(UIEvent::Lines(styled))?;
             }
         }
         Ok(NextStep::Run)

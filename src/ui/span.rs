@@ -32,27 +32,23 @@ impl Span {
     }
 
     pub fn fmt_raw(content: impl Into<String>) -> Self {
-        let mut content = content.into();
-        if !content.ends_with("\r\n") {
-            content.push_str("\r\n");
-        }
-        Self::new(content, Style::default())
+        Self::fmt_with_style(content, Style::default())
     }
 
     pub fn fmt_note(content: impl Into<String>) -> Self {
+        Self::fmt_with_style(content, Style::default().fg(Color::LightBlue))
+    }
+
+    pub fn fmt_with_style(content: impl Into<String>, style: Style) -> Self {
         let mut content = content.into();
         if !content.ends_with("\r\n") {
             content.push_str("\r\n");
         }
-        Self::new(content, Style::default().fg(Color::LightBlue))
+        Self::new(content, style)
     }
 
     pub fn fmt_err(content: impl Into<String>) -> Self {
-        let mut content = content.into();
-        if !content.ends_with("\r\n") {
-            content.push_str("\r\n");
-        }
-        Self::new(content, Style::default().add_modifier(Modifier::REVERSED))
+        Self::fmt_with_style(content, Style::default().add_modifier(Modifier::REVERSED))
     }
 
     #[inline]

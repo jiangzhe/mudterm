@@ -111,16 +111,16 @@ fn run6() -> Result<()> {
         height: 4,
     };
     let mut flow = Flow::new(flowarea, 5000, true);
-    flow.push_line(RawLine::new("静言\r\n"));
-    flow.push_line(RawLine::new("┌───基本知识\r\n"));
-    flow.push_line(RawLine::new("│ 读书\r\n"));
-    flow.push_line(RawLine::new("│ 叫化\r\n"));
+    flow.push_line(Line::fmt_raw("静言"));
+    flow.push_line(Line::fmt_raw("┌───基本知识"));
+    flow.push_line(Line::fmt_raw("│ 读书"));
+    flow.push_line(Line::fmt_raw("│ 叫化"));
     terminal.render_widget(&mut flow, flowarea)?;
     terminal.flush(vec![flowarea])?;
     let mut keys = stdin.keys();
     keys.next().unwrap();
 
-    flow.push_line(RawLine::new("│ 道听\r\n"));
+    flow.push_line(Line::fmt_raw("│ 道听"));
     terminal.render_widget(&mut flow, flowarea)?;
     terminal.flush(vec![flowarea])?;
     keys.next().unwrap();
@@ -154,7 +154,7 @@ fn run5() -> Result<()> {
     for line in s.split('\n') {
         let mut line = line.to_owned();
         line.push('\n');
-        flow.push_line(RawLine::new(line));
+        flow.push_line(Line::fmt_raw(line));
     }
 
     terminal.render_widget(&mut flow, flowarea)?;
@@ -169,7 +169,7 @@ fn run5() -> Result<()> {
                 let mut cmd = String::new();
                 cmd.push(c);
                 cmd.push_str("\r\n");
-                flow.push_line(RawLine::fmt_raw(cmd));
+                flow.push_line(Line::fmt_raw(cmd));
             }
             Key::Left => write!(terminal, "{}", termion::cursor::Left(1))?,
             _ => (),
@@ -258,7 +258,7 @@ fn run3() -> Result<()> {
     let wl = line.wrap(buf.area().width as usize, true);
     for (i, l) in wl.0.into_iter().enumerate() {
         let (mut x, y) = (buf.area().left(), buf.area().top() + i as u16);
-        for span in l.spans {
+        for span in l.into_spans() {
             if let Some(pos) =
                 buf.set_line_str(x, y, &span.content, buf.area().right(), span.style, true)
             {
@@ -408,7 +408,7 @@ fn run1() -> Result<()> {
             lines.push(std::mem::replace(&mut curr_line, Line::new(vec![])));
         }
     }
-    if !curr_line.spans.is_empty() {
+    if !curr_line.spans().is_empty() {
         lines.push(curr_line);
     }
     render_lines(&mut terminal, &lines, &buf)?;
@@ -459,7 +459,7 @@ fn render_lines<W: Write>(writer: &mut W, lines: &[Line], buf: &str) -> Result<(
         let wls = line.wrap(width as usize, true);
         for wl in wls.0 {
             eprintln!("wrapped line={:?}", wl);
-            for span in &wl.spans {
+            for span in wl.spans() {
                 eprintln!("span={:?}", span);
                 write!(writer, "{}", span)?;
             }

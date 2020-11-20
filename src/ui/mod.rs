@@ -15,7 +15,7 @@ use crate::event::Event;
 use crate::ui::terminal::Terminal;
 use crossbeam_channel::Sender;
 use layout::Rect;
-use line::RawLine;
+use line::{Line, Lines};
 use termion::event::{Key, MouseEvent};
 use widget::{CmdBar, Flow, Widget};
 
@@ -101,8 +101,8 @@ impl UICallback for EventBusCallback {
 
 #[derive(Debug, Clone)]
 pub enum UIEvent {
-    Line(RawLine),
-    Lines(Vec<RawLine>),
+    Line(Line),
+    Lines(Lines),
     Key(Key),
     Tick,
     WindowResize,
@@ -188,7 +188,7 @@ impl Screen<EventBusCallback> {
                     log::debug!("unhandled key {:?}", k);
                 }
             },
-            UIEvent::Lines(lines) => self.flow.push_lines(lines),
+            UIEvent::Lines(lines) => self.flow.push_lines(lines.into_vec()),
             UIEvent::Line(line) => self.flow.push_line(line),
             UIEvent::Mouse(_) => {
                 // not to render the screen

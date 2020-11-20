@@ -1,5 +1,5 @@
 use crate::runtime::{RuntimeAction, RuntimeEvent, RuntimeOutput};
-use crate::ui::line::{RawLine, RawLines};
+use crate::ui::line::{Line, Lines, RawLine, RawLines};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -16,15 +16,37 @@ impl OutputQueue {
         Self(Arc::new(Mutex::new(VecDeque::new())))
     }
 
-    pub fn push_line(&self, line: RawLine) {
+    pub fn push_line(&self, raw: RawLine, styled: Line) {
+        self.push_raw_line(raw);
+        self.push_styled_line(styled);
+    }
+
+    fn push_raw_line(&self, raw: RawLine) {
         let mut evtq = self.0.lock().unwrap();
-        if let Some(RuntimeEvent::Output(RuntimeOutput::ToUI(lines))) = evtq.back_mut() {
-            lines.push_line(line);
+        if let Some(RuntimeEvent::Output(RuntimeOutput::ToUI(raw_lines, _))) = evtq.back_mut() {
+            raw_lines.push_line(raw);
             return;
         }
-        let mut lines = RawLines::unbounded();
-        lines.push_line(line);
-        evtq.push_back(RuntimeEvent::Output(RuntimeOutput::ToUI(lines)));
+        let mut raw_lines = RawLines::unbounded();
+        raw_lines.push_line(raw);
+        evtq.push_back(RuntimeEvent::Output(RuntimeOutput::ToUI(
+            raw_lines,
+            Lines::new(),
+        )));
+    }
+
+    pub fn push_styled_line(&self, styled: Line) {
+        let mut evtq = self.0.lock().unwrap();
+        if let Some(RuntimeEvent::Output(RuntimeOutput::ToUI(_, styled_lines))) = evtq.back_mut() {
+            styled_lines.push_line(styled);
+            return;
+        }
+        let mut styled_lines = Lines::new();
+        styled_lines.push_line(styled);
+        evtq.push_back(RuntimeEvent::Output(RuntimeOutput::ToUI(
+            RawLines::unbounded(),
+            styled_lines,
+        )));
     }
 
     /// 推送命令必须以\n结尾

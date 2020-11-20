@@ -1,32 +1,37 @@
 pub mod alias;
+pub mod cache;
 pub mod model;
 pub mod queue;
 pub mod sub;
 pub mod timer;
 pub mod trigger;
-pub mod cache;
 
 use crate::codec::{Codec, MudCodec};
 use crate::conf;
 use crate::error::{Error, Result};
 use crate::event::{Event, NextStep};
-use crate::ui::line::{RawLine, RawLines};
+use crate::ui::ansi::AnsiParser;
+use crate::ui::line::{Line, Lines, RawLine, RawLines};
 use crate::ui::style::{Color, Style};
 use crate::ui::UserOutput;
 use alias::{Alias, AliasFlags, AliasModel, Aliases};
+use cache::{CacheText, InlineStyle};
 use crossbeam_channel::Sender;
 use mlua::Lua;
+use model::ModelStore;
 use queue::OutputQueue;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::hash::Hash;
 use std::io::Write;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use sub::{Sub, SubParser};
+use trigger::{Trigger, TriggerFlags, TriggerModel, Triggers};
 use uuid::Uuid;
 
 /// 运行时事件，进由运行时进行处理
@@ -43,8 +48,8 @@ pub enum RuntimeEvent {
 pub enum RuntimeOutput {
     /// 发送给服务器的命令
     ToServer(String),
-    /// 显示在终端上的文本
-    ToUI(RawLines),
+    /// 发送给UI的文本（包含原始文本，以及格式解析后的文本）
+    ToUI(RawLines, Lines),
 }
 
 /// 运行时事件回调
@@ -58,6 +63,7 @@ pub enum RuntimeAction {
     SwitchCodec(Codec),
     CreateAlias(Alias),
     DeleteAlias(String),
+    DeleteTrigger(String),
 }
 
 /// 脚本环境中的变量存储和查询
@@ -103,8 +109,11 @@ pub struct Runtime {
     cmd_delim: char,
     send_empty_cmd: bool,
     logger: Option<File>,
-    // triggers: Triggers,
+    // ANSI解析器
+    parser: AnsiParser,
+    cache: CacheText,
     aliases: Aliases,
+    triggers: Triggers,
 }
 
 impl Runtime {
@@ -116,13 +125,14 @@ impl Runtime {
             queue: OutputQueue::new(),
             vars: Variables::new(),
             mud_codec: MudCodec::new(),
-            // local buffer for triggers
-            // buffer: RawLineBuffer::with_capacity(10),
             cmd_delim: config.term.cmd_delim,
             send_empty_cmd: config.term.send_empty_cmd,
             logger: None,
-            // triggers: Triggers::new(),
+            parser: AnsiParser::new(),
+            // only allow up to 5 lines for trigger
+            cache: CacheText::new(5, 10),
             aliases: Aliases::new(),
+            triggers: Triggers::new(),
         }
     }
 
@@ -131,9 +141,10 @@ impl Runtime {
         self.logger = Some(logger);
     }
 
-    // 向UI线程推送文字
-    pub fn push_line_to_ui(&mut self, line: RawLine) {
-        self.queue.push_line(line);
+    /// 向UI线程推送文字
+    pub fn push_line_to_ui(&mut self, line: Line) {
+        // 直接向队列中推送，跳过触发器阶段
+        self.queue.push_styled_line(line);
     }
 
     /// 将UTF-8字符串编码为MUD服务器编码（如GBK，Big5或仍然为UTF-8）
@@ -151,7 +162,7 @@ impl Runtime {
     /// 执行别名回调
     pub fn exec_alias(&self, name: String, text: String) -> Result<()> {
         let alias = self.aliases.get(&name).ok_or_else(|| {
-            Error::RuntimeError(format!("alias '{}' mismatch with text '{}'", &name, &text))
+            Error::RuntimeError(format!("alias '{}' not found with text '{}'", &name, &text))
         })?;
         let wildcards = alias.captures(&text)?;
         let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_ALIAS_CALLBACKS)?;
@@ -172,10 +183,24 @@ impl Runtime {
         Ok(())
     }
 
-    // 删除别名
+    /// 删除别名
     fn delete_alias(&mut self, name: &str) -> Result<()> {
         self.delete_alias_callback(name)?;
         self.aliases.remove(name);
+        Ok(())
+    }
+
+    /// 执行触发器
+    pub fn exec_trigger(
+        &self,
+        trigger: &Trigger,
+        text: String,
+        styles: Vec<InlineStyle>,
+    ) -> Result<()> {
+        let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_TRIGGER_CALLBACKS)?;
+        let func: mlua::Function = callbacks.get(&trigger.model.name[..])?;
+        let wildcards = trigger.captures(&text)?;
+        func.call((trigger.model.name.to_owned(), text, wildcards, styles))?;
         Ok(())
     }
 
@@ -185,6 +210,18 @@ impl Runtime {
             UserOutput::Script(script) => self.process_user_script(script),
             UserOutput::Cmd(cmd) => self.process_user_cmd(cmd),
         }
+    }
+
+    fn delete_trigger_callback(&mut self, name: &str) -> Result<()> {
+        let trigger_callbacks: mlua::Table = self.lua.globals().get(GLOBAL_TRIGGER_CALLBACKS)?;
+        trigger_callbacks.set(name, mlua::Value::Nil)?;
+        Ok(())
+    }
+
+    fn delete_trigger(&mut self, name: &str) -> Result<()> {
+        self.delete_trigger_callback(name)?;
+        self.triggers.remove(name);
+        Ok(())
     }
 
     /// 处理用户命令，拆分并做别名转换
@@ -212,7 +249,7 @@ impl Runtime {
                 PostCmd::Alias { name, text } => {
                     if let Err(e) = self.exec_alias(name, text) {
                         let err = format_err(e.to_string());
-                        self.queue.push_line(RawLine::fmt_err(err));
+                        self.queue.push_styled_line(Line::fmt_err(err));
                     }
                 }
             }
@@ -223,13 +260,36 @@ impl Runtime {
     fn process_user_script(&mut self, script: String) {
         if let Err(e) = self.exec_script(&script) {
             let err = format_err(e.to_string());
-            self.queue.push_line(RawLine::fmt_err(err));
+            self.queue.push_styled_line(Line::fmt_err(err));
         }
     }
 
-    pub fn process_world_line(&mut self, line: RawLine) {
+    pub fn process_world_line(&mut self, raw: RawLine) {
         // todo: 需要提前处理文字格式，以便于触发器使用
-        self.queue.push_line(line);
+        self.parser.fill(raw.as_ref());
+        let mut styled = vec![];
+        while let Some(span) = self.parser.next_span() {
+            styled.push(span);
+        }
+        let styled = Line::new(styled);
+        // 添加进文本缓存，供触发器进行匹配
+        self.cache.push_line(&styled);
+        // 推送到事件队列
+        self.queue.push_line(raw, styled);
+        // 使用is_match预先匹配，最多一个触发器
+        if let Some((trigger, text, styles)) = self.triggers.trigger_first(&self.cache) {
+            if let Err(e) = self.exec_trigger(trigger, text, styles) {
+                let err = format_err(e.to_string());
+                self.queue.push_styled_line(Line::fmt_err(err));
+            }
+            // 对OneShot触发器进行删除
+            if trigger.model.extra.one_shot() {
+                self.queue
+                    .push(RuntimeEvent::ImmediateAction(RuntimeAction::DeleteTrigger(
+                        trigger.model.name.to_owned(),
+                    )));
+            }
+        }
     }
 
     pub fn process_world_lines(&mut self, lines: impl IntoIterator<Item = RawLine>) {
@@ -238,6 +298,7 @@ impl Runtime {
         }
     }
 
+    /// 这是对原始字节流的处理，这里仅解码并处理换行
     pub fn process_bytes_from_mud(&mut self, bs: &[u8]) -> Result<()> {
         let s = self.mud_codec.decode(bs);
         let s: Arc<str> = Arc::from(s);
@@ -307,7 +368,7 @@ impl Runtime {
             RuntimeAction::CreateAlias(alias) => {
                 let name = alias.model.name.to_owned();
                 if let Err(alias) = self.create_alias(alias) {
-                    self.push_line_to_ui(RawLine::fmt_err(format!("创建别名失败：{:?}", alias)));
+                    self.push_line_to_ui(Line::fmt_err(format!("创建别名失败：{:?}", alias)));
                     // 注销回调函数，忽略错误
                     if let Err(e) = self.delete_alias_callback(&name) {
                         log::warn!("delete alias callback error {}", e);
@@ -315,8 +376,15 @@ impl Runtime {
                 }
             }
             RuntimeAction::DeleteAlias(name) => {
+                log::trace!("deleting alias '{}'", name);
                 if let Err(e) = self.delete_alias(&name) {
                     log::warn!("delete alias error {}", e);
+                }
+            }
+            RuntimeAction::DeleteTrigger(name) => {
+                log::trace!("deleting trigger '{}'", name);
+                if let Err(e) = self.delete_trigger(&name) {
+                    log::warn!("delete trigger error {}", e);
                 }
             }
         }
@@ -422,7 +490,7 @@ impl Runtime {
         let queue = self.queue.clone();
         let note = self.lua.create_function(move |_, s: String| {
             log::trace!("Note function called");
-            queue.push_line(RawLine::fmt_note(s));
+            queue.push_styled_line(Line::fmt_note(s));
             Ok(())
         })?;
         globals.set("Note", note)?;
@@ -436,7 +504,7 @@ impl Runtime {
                     let style = Style::default()
                         .fg(Color::from_str_or_default(fg, Color::Reset))
                         .bg(Color::from_str_or_default(bg, Color::Reset));
-                    queue.push_line(RawLine::fmt(text, style));
+                    queue.push_styled_line(Line::fmt_with_style(text, style));
                     Ok(())
                 })?;
         globals.set("ColourNote", colour_note)?;
@@ -638,30 +706,46 @@ mod tests {
     #[test]
     fn test_process_simple_alias() {
         let (mut rt, _) = new_runtime().unwrap();
-        rt.lua.load(r#"
+        rt.lua
+            .load(
+                r#"
         local n = function() Send("north") end
         CreateAlias("alias-n", "map", "^n$", alias_flag.Enabled, n)
-        "#).exec().unwrap();
+        "#,
+            )
+            .exec()
+            .unwrap();
         rt.process_queue();
         // start user output
         rt.process_user_output(UserOutput::Cmd("n".to_owned()));
         let mut outputs = rt.process_queue();
         assert_eq!(1, outputs.len());
-        assert_eq!(RuntimeOutput::ToServer("north\n".to_owned()), outputs.pop().unwrap());
+        assert_eq!(
+            RuntimeOutput::ToServer("north\n".to_owned()),
+            outputs.pop().unwrap()
+        );
     }
 
     #[test]
     fn test_process_complex_alias() {
         let (mut rt, _) = new_runtime().unwrap();
-        rt.lua.load(r#"
+        rt.lua
+            .load(
+                r#"
         local m = function(name, line, wildcards) Send(wildcards[1]..wildcards[2]) end
         CreateAlias("alias-m", "number", "^num (\\d+)\\s+(\\d+)$", alias_flag.Enabled, m) 
-        "#).exec().unwrap();
+        "#,
+            )
+            .exec()
+            .unwrap();
         rt.process_queue();
         rt.process_user_output(UserOutput::Cmd("x;num 123 456".to_owned()));
         let mut outputs = rt.process_queue();
         assert_eq!(1, outputs.len());
-        assert_eq!(RuntimeOutput::ToServer("x\n123456\n".to_owned()), outputs.pop().unwrap());
+        assert_eq!(
+            RuntimeOutput::ToServer("x\n123456\n".to_owned()),
+            outputs.pop().unwrap()
+        );
     }
 
     fn assert_eq_str(expect: impl AsRef<str>, actual: RuntimeEvent) {

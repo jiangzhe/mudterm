@@ -228,6 +228,28 @@ impl Color {
             _ => default,
         }
     }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Color::Reset => "reset",
+            Color::Black => "black",
+            Color::Red => "red",
+            Color::Green => "green",
+            Color::Yellow => "yellow",
+            Color::Blue => "blue",
+            Color::Magenta => "magenta",
+            Color::Cyan => "cyan",
+            Color::Gray => "gray",
+            Color::DarkGray => "darkgray",
+            Color::LightRed => "lightred",
+            Color::LightGreen => "lightgreen",
+            Color::LightYellow => "lightyellow",
+            Color::LightBlue => "lightblue",
+            Color::LightMagenta => "lightmagenta",
+            Color::LightCyan => "lightcyan",
+            Color::White => "white",
+        }
+    }
 }
 
 bitflags! {

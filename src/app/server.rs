@@ -228,9 +228,9 @@ impl RuntimeOutputHandler for Server {
                 let bs = rt.encode(&s)?;
                 self.worldtx.send(bs)?;
             }
-            RuntimeOutput::ToUI(lines) => {
+            RuntimeOutput::ToUI(raw, _) => {
                 if let Some((clitx, _)) = self.to_cli.as_mut() {
-                    let lines = lines.into_vec();
+                    let lines = raw.into_vec();
                     if let Err(e) = clitx.send(Packet::Lines(lines)) {
                         log::error!("channel send to-client message error {}", e);
                     }

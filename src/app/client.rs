@@ -4,7 +4,7 @@ use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::protocol::Packet;
 use crate::runtime::{Runtime, RuntimeEvent, RuntimeOutput, RuntimeOutputHandler};
 use crate::signal;
-use crate::ui::line::RawLine;
+use crate::ui::line::Line;
 use crate::ui::{Screen, UIEvent};
 use crate::userinput;
 use crossbeam_channel::{unbounded, Sender};
@@ -147,7 +147,7 @@ impl EventHandler for Client {
             Event::ServerDown => {
                 log::error!("server down or not reachable");
                 // let user quit
-                rt.push_line_to_ui(RawLine::fmt_err("与服务器断开了连接，请关闭并重新连接"));
+                rt.push_line_to_ui(Line::fmt_err("与服务器断开了连接，请关闭并重新连接"));
             }
             // client模式不支持客户端连接
             Event::NewClient(..)
@@ -174,8 +174,8 @@ impl RuntimeOutputHandler for Client {
                 }
                 self.srvtx.send(Packet::Text(s))?;
             }
-            RuntimeOutput::ToUI(lines) => {
-                self.uitx.send(UIEvent::Lines(lines.into_vec()))?;
+            RuntimeOutput::ToUI(_, styled) => {
+                self.uitx.send(UIEvent::Lines(styled))?;
             }
         }
         Ok(NextStep::Run)
