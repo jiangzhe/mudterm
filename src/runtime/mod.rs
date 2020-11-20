@@ -4,6 +4,7 @@ pub mod queue;
 pub mod sub;
 pub mod timer;
 pub mod trigger;
+pub mod cache;
 
 use crate::codec::{Codec, MudCodec};
 use crate::conf;
@@ -40,11 +41,9 @@ pub enum RuntimeEvent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeOutput {
-    /// switch codec for both encoding and decoding
-    // SwitchCodec(Codec),
-    /// string which is to be sent to server
+    /// 发送给服务器的命令
     ToServer(String),
-    /// lines from server or script to display
+    /// 显示在终端上的文本
     ToUI(RawLines),
 }
 
@@ -338,7 +337,7 @@ impl Runtime {
             if raw_line.is_empty() {
                 // send empty line directly, maybe filtered before this action
                 cmds.push(PostCmd::Raw(raw_line));
-            } else if let Some(alias) = match_aliases(&raw_line, self.aliases.as_ref()) {
+            } else if let Some(alias) = self.aliases.match_first(&raw_line) {
                 log::debug!(
                     "alias[{}/{}: {}] matched",
                     alias.model.group,
@@ -449,7 +448,13 @@ impl Runtime {
         })?;
         globals.set("GetUniqueID", get_unique_id)?;
 
-        // 全局回调注册表
+        // 别名常量
+        let alias_flag: mlua::Table = self.lua.create_table()?;
+        alias_flag.set("Enabled", 1)?;
+        alias_flag.set("KeepEvaluating", 8)?;
+        globals.set("alias_flag", alias_flag)?;
+
+        // 别名回调注册表
         let alias_callbacks = self.lua.create_table()?;
         self.lua
             .globals()
@@ -459,12 +464,12 @@ impl Runtime {
         let queue = self.queue.clone();
         let create_alias = self.lua.create_function(
             move |lua,
-                  (name, group, pattern, func, flags): (
+                  (name, group, pattern, flags, func): (
                 String,
                 String,
                 String,
-                mlua::Function,
                 u16,
+                mlua::Function,
             )| {
                 if pattern.is_empty() {
                     return Err(mlua::Error::external(Error::RuntimeError(
@@ -592,14 +597,14 @@ pub enum PostCmd {
     Alias { name: String, text: String },
 }
 
-fn match_aliases<'a>(input: &str, aliases: &'a [Alias]) -> Option<&'a Alias> {
-    for alias in aliases {
-        if alias.model.enabled() && alias.is_match(&input) {
-            return Some(alias);
-        }
-    }
-    None
-}
+// fn match_aliases<'a>(input: &str, aliases: &'a [Alias]) -> Option<&'a Alias> {
+//     for alias in aliases {
+//         if alias.model.enabled() && alias.is_match(&input) {
+//             return Some(alias);
+//         }
+//     }
+//     None
+// }
 
 #[cfg(test)]
 mod tests {
@@ -631,9 +636,32 @@ mod tests {
     }
 
     #[test]
-    fn test_process_single_alias() {
+    fn test_process_simple_alias() {
         let (mut rt, _) = new_runtime().unwrap();
-        // todo
+        rt.lua.load(r#"
+        local n = function() Send("north") end
+        CreateAlias("alias-n", "map", "^n$", alias_flag.Enabled, n)
+        "#).exec().unwrap();
+        rt.process_queue();
+        // start user output
+        rt.process_user_output(UserOutput::Cmd("n".to_owned()));
+        let mut outputs = rt.process_queue();
+        assert_eq!(1, outputs.len());
+        assert_eq!(RuntimeOutput::ToServer("north\n".to_owned()), outputs.pop().unwrap());
+    }
+
+    #[test]
+    fn test_process_complex_alias() {
+        let (mut rt, _) = new_runtime().unwrap();
+        rt.lua.load(r#"
+        local m = function(name, line, wildcards) Send(wildcards[1]..wildcards[2]) end
+        CreateAlias("alias-m", "number", "^num (\\d+)\\s+(\\d+)$", alias_flag.Enabled, m) 
+        "#).exec().unwrap();
+        rt.process_queue();
+        rt.process_user_output(UserOutput::Cmd("x;num 123 456".to_owned()));
+        let mut outputs = rt.process_queue();
+        assert_eq!(1, outputs.len());
+        assert_eq!(RuntimeOutput::ToServer("x\n123456\n".to_owned()), outputs.pop().unwrap());
     }
 
     fn assert_eq_str(expect: impl AsRef<str>, actual: RuntimeEvent) {

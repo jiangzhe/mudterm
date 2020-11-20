@@ -28,8 +28,11 @@ impl OutputQueue {
     }
 
     /// 推送命令必须以\n结尾
-    pub fn push_cmd(&self, cmd: String) {
-        debug_assert!(cmd.ends_with('\n'));
+    pub fn push_cmd(&self, mut cmd: String) {
+        // maybe directly sent from script
+        if !cmd.ends_with('\n') {
+            cmd.push('\n');
+        }
         let mut evtq = self.0.lock().unwrap();
         if let Some(RuntimeEvent::Output(RuntimeOutput::ToServer(s))) = evtq.back_mut() {
             s.push_str(&cmd);

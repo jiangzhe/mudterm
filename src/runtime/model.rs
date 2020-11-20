@@ -2,6 +2,7 @@ use crate::error::{Error, Result};
 use mlua::ToLua;
 use regex::Regex;
 use std::collections::HashMap;
+use std::slice::Iter;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model<X> {
@@ -41,7 +42,7 @@ impl<M: PartialEq> PartialEq for ModelExec<M> {
     }
 }
 
-impl<X: std::fmt::Debug> ModelExec<Model<X>> {
+impl<X> ModelExec<Model<X>> {
     pub fn new(model: Model<X>, re: Regex) -> Self {
         Self { model, re }
     }
@@ -55,14 +56,17 @@ impl<X: std::fmt::Debug> ModelExec<Model<X>> {
         let captures = self
             .re
             .captures(input.as_ref())
-            .ok_or_else(|| Error::RuntimeError(format!("mismatch alias {:?}", self.model)))?;
-        let mut names = self.re.capture_names().skip(1);
+            .ok_or_else(|| Error::RuntimeError(format!("mismatch alias[name={}, pattern={}]", &self.model.name, &self.model.pattern)))?;
+        let mut names = self.re.capture_names().skip(1).fuse();
         let mut mapping = HashMap::new();
-        while let Some((i, om)) = captures.iter().enumerate().skip(1).next() {
-            let name = names.next().unwrap();
+        let mut captures = captures.iter().enumerate().skip(1);
+        while let Some((i, om)) = captures.next() {
+            // let name = names.next().unwrap();
             if let Some(m) = om {
-                if let Some(name) = name {
-                    mapping.insert(NumberOrString::new_string(name), m.as_str().to_owned());
+                if let Some(name) = names.next() {
+                    if let Some(name) = name {
+                        mapping.insert(NumberOrString::new_string(name), m.as_str().to_owned());
+                    }
                 }
                 mapping.insert(NumberOrString::Number(i), m.as_str().to_owned());
             }
@@ -111,15 +115,13 @@ pub struct VecModelStore<ME> {
     arr: Vec<ME>,
 }
 
-impl<X: ModelExtra> AsRef<[ModelExec<Model<X>>]> for VecModelStore<ModelExec<Model<X>>> {
-    fn as_ref(&self) -> &[ModelExec<Model<X>>] {
-        self.arr.as_ref()
-    }
-}
-
 impl<X: ModelExtra> VecModelStore<ModelExec<Model<X>>> {
     pub fn new() -> Self {
         Self { arr: Vec::new() }
+    }
+
+    pub fn iter(&self) -> Iter<ModelExec<Model<X>>> {
+        self.arr.iter()
     }
 
     /// 添加模型，出错则返回原值
@@ -192,6 +194,31 @@ impl<X: ModelExtra> VecModelStore<ModelExec<Model<X>>> {
             return None;
         }
         self.arr.iter_mut().find(|me| &me.model.name == name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.arr.len()
+    }
+
+    /// 匹配输出第一个匹配到的模型
+    pub fn match_first(&self, input: &str) -> Option<&ModelExec<Model<X>>> {
+        for me in &self.arr {
+            if me.model.extra.enabled() && me.is_match(&input) {
+                return Some(me);
+            }
+        }
+        None
+    }
+
+    /// 输出所有匹配成功的模型
+    pub fn match_any(&self, input: &str) -> Vec<&ModelExec<Model<X>>> {
+        let mut rs = vec![];
+        for me in &self.arr {
+            if me.model.extra.enabled() && me.is_match(&input) {
+                rs.push(me);
+            }
+        }
+        rs
     }
 
     #[inline]
