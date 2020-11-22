@@ -34,6 +34,8 @@ pub enum Error {
     AuthError,
     #[error("Compile script error {0}")]
     CompileScriptError(String),
+    #[error("Database error {0}")]
+    DatabaseError(#[from] rusqlite::Error),
 }
 
 impl<T> From<crossbeam_channel::SendError<T>> for Error {

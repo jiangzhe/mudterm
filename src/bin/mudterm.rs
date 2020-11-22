@@ -28,12 +28,12 @@ fn main() -> Result<()> {
     let debuglog = File::create(&config.server.debug_file)?;
     let _stderr_redirect = Redirect::stderr(debuglog).unwrap();
     let verbosity = match &cmdopts.log_level[..] {
-        "error" => 1,
-        "warn" => 2,
-        "info" => 3,
-        "debug" => 4,
-        "trace" => 5,
-        _ => 3,
+        "error" => 0,
+        "warn" => 1,
+        "info" => 2,
+        "debug" => 3,
+        "trace" => 4,
+        _ => 2,
     };
     stderrlog::new()
         .module(module_path!())

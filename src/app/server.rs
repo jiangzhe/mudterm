@@ -1,5 +1,5 @@
 use crate::auth;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::protocol::Packet;
 use crate::runtime::{Runtime, RuntimeOutput, RuntimeOutputHandler};
@@ -7,9 +7,22 @@ use crate::transport::{Outbound, Telnet, TelnetEvent};
 use crate::ui::line::RawLines;
 use crate::ui::UserOutput;
 use crossbeam_channel::{unbounded, Sender};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 use std::{io, thread};
+
+pub fn connect_world(world_addr: &str, timeout: Duration) -> Result<TcpStream> {
+    let addrs = world_addr.to_socket_addrs()?;
+    for addr in addrs {
+        if let Ok(from_mud) = TcpStream::connect_timeout(&addr, timeout) {
+            return Ok(from_mud);
+        }
+    }
+    Err(Error::RuntimeError(format!(
+        "failed to connect to world '{}'",
+        world_addr
+    )))
+}
 
 /// 启动线程接收MUD消息
 pub fn start_from_mud_handle(evttx: Sender<Event>, from_mud: impl io::Read + Send + 'static) {
@@ -27,7 +40,9 @@ pub fn start_from_mud_handle(evttx: Sender<Event>, from_mud: impl io::Read + Sen
                     break;
                 }
                 Ok(TelnetEvent::Empty) => (),
-                Ok(TelnetEvent::DataToSend(bs)) => evttx.send(Event::TelnetBytes(bs)).unwrap(),
+                Ok(TelnetEvent::DataToSend(bs)) => {
+                    evttx.send(Event::TelnetBytes(bs)).unwrap();
+                }
                 Ok(TelnetEvent::Text(bs)) => evttx.send(Event::WorldBytes(bs)).unwrap(),
             }
         }
@@ -50,6 +65,7 @@ pub fn start_to_mud_handle(
                     return;
                 }
                 Ok(bs) => {
+                    log::trace!("send bytes to mud[len={}]", bs.len());
                     if let Err(e) = outbound.send(bs) {
                         log::error!("send server error: {}", e);
                     }
@@ -71,6 +87,7 @@ pub fn start_server_listener_handle(listener: TcpListener, evttx: Sender<Event>)
             }
             Ok((conn, addr)) => (conn, addr),
         };
+        log::info!("accept new client with addr {:?}", addr);
         evttx.send(Event::NewClient(conn, addr)).unwrap();
     });
 }
@@ -99,8 +116,7 @@ fn start_to_client_handle(conn: TcpStream, pass: String, evttx: Sender<Event>) -
                     );
                     return;
                 }
-                Ok(sm) => {
-                    let pkt: Packet = sm.into();
+                Ok(pkt) => {
                     if pkt.write_to(&mut conn).is_err() {
                         let _ = evttx.send(Event::ClientDisconnect);
                         break;
@@ -122,6 +138,7 @@ fn start_from_client_handle(mut conn: TcpStream, evttx: Sender<Event>) {
                 break;
             }
             Ok(Packet::Text(s)) => {
+                log::trace!("received client command[len={}]", s.len());
                 evttx.send(Event::UserOutput(UserOutput::Cmd(s))).unwrap();
             }
             Ok(other) => {

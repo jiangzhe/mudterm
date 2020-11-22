@@ -17,11 +17,11 @@ impl OutputQueue {
     }
 
     pub fn push_line(&self, raw: RawLine, styled: Line) {
-        self.push_raw_line(raw);
-        self.push_styled_line(styled);
+        self.send_raw_line(raw);
+        self.send_styled_line(styled);
     }
 
-    fn push_raw_line(&self, raw: RawLine) {
+    fn send_raw_line(&self, raw: RawLine) {
         let mut evtq = self.0.lock().unwrap();
         if let Some(RuntimeEvent::Output(RuntimeOutput::ToUI(raw_lines, _))) = evtq.back_mut() {
             raw_lines.push_line(raw);
@@ -35,7 +35,7 @@ impl OutputQueue {
         )));
     }
 
-    pub fn push_styled_line(&self, styled: Line) {
+    pub fn send_styled_line(&self, styled: Line) {
         let mut evtq = self.0.lock().unwrap();
         if let Some(RuntimeEvent::Output(RuntimeOutput::ToUI(_, styled_lines))) = evtq.back_mut() {
             styled_lines.push_line(styled);
@@ -50,7 +50,7 @@ impl OutputQueue {
     }
 
     /// 推送命令必须以\n结尾
-    pub fn push_cmd(&self, mut cmd: String) {
+    pub fn send_cmd(&self, mut cmd: String) {
         // maybe directly sent from script
         if !cmd.ends_with('\n') {
             cmd.push('\n');

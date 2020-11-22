@@ -2,9 +2,8 @@ use crate::conf;
 use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::protocol::Packet;
-use crate::runtime::{Runtime, RuntimeEvent, RuntimeOutput, RuntimeOutputHandler};
+use crate::runtime::{Runtime, RuntimeOutput, RuntimeOutputHandler};
 use crate::signal;
-use crate::ui::line::Line;
 use crate::ui::{Screen, UIEvent};
 use crate::userinput;
 use crossbeam_channel::{unbounded, Sender};
@@ -52,6 +51,7 @@ pub fn start_ui_handle(
                     break;
                 }
                 Ok(evt) => {
+                    log::trace!("processing UIEvent {:?}", evt);
                     let to_quit = match screen.process_event(evt) {
                         Ok(f) => f,
                         Err(e) => {
@@ -79,6 +79,7 @@ pub fn start_to_server_handle(mut to_server: impl io::Write + Send + 'static) ->
                 return;
             }
             Ok(pkt) => {
+                log::trace!("processing packet {:?}", pkt);
                 if let Err(e) = pkt.write_to(&mut to_server) {
                     log::error!("send message to server error {}", e);
                     return;
@@ -101,6 +102,7 @@ pub fn start_from_server_handle(
                 return;
             }
             Ok(Packet::Lines(lines)) => {
+                log::trace!("receiving server message {:?}", lines);
                 evttx.send(Event::LinesFromServer(lines)).unwrap();
             }
             Ok(_) => (),
@@ -147,7 +149,7 @@ impl EventHandler for Client {
             Event::ServerDown => {
                 log::error!("server down or not reachable");
                 // let user quit
-                rt.push_line_to_ui(Line::fmt_err("与服务器断开了连接，请关闭并重新连接"));
+                rt.push_err_to_ui("与服务器断开了连接，请关闭并重新连接");
             }
             // client模式不支持客户端连接
             Event::NewClient(..)

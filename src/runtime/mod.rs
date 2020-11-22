@@ -20,17 +20,15 @@ use crossbeam_channel::Sender;
 use mlua::Lua;
 use model::ModelStore;
 use queue::OutputQueue;
-use regex::Regex;
-use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hash;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use sub::{Sub, SubParser};
-use trigger::{Trigger, TriggerFlags, TriggerModel, TriggerExtra, Triggers};
+use trigger::{Trigger, TriggerExtra, TriggerFlags, TriggerModel, Triggers};
 use uuid::Uuid;
 
 /// 运行时事件，进由运行时进行处理
@@ -64,6 +62,9 @@ pub enum RuntimeAction {
     DeleteAlias(String),
     CreateTrigger(Trigger),
     DeleteTrigger(String),
+    LoadFile(String),
+    ExecuteUserCmd(String),
+    ExecuteUserScript(String),
 }
 
 /// 脚本环境中的变量存储和查询
@@ -142,9 +143,26 @@ impl Runtime {
     }
 
     /// 向UI线程推送文字
-    pub fn push_line_to_ui(&mut self, line: Line) {
+    fn push_line_to_ui(&self, line: Line) {
         // 直接向队列中推送，跳过触发器阶段
-        self.queue.push_styled_line(line);
+        self.queue.send_styled_line(line);
+    }
+
+    /// 将错误信息推送给UI
+    pub fn push_err_to_ui(&self, err: impl Into<String>) {
+        let mut lines: String = err.into();
+        if lines.ends_with('\n') {
+            lines.truncate(lines.len() - 1);
+        }
+        for line in lines.split('\n') {
+            let line = if line.ends_with('\r') {
+                &line[..line.len() - 1]
+            } else {
+                line
+            };
+            let line = Line::fmt_err(line);
+            self.push_line_to_ui(line);
+        }
     }
 
     /// 将UTF-8字符串编码为MUD服务器编码（如GBK，Big5或仍然为UTF-8）
@@ -153,7 +171,8 @@ impl Runtime {
     }
 
     /// 执行任意脚本，用户可通过UI界面直接输入脚本
-    pub fn exec_script(&self, input: impl AsRef<[u8]>) -> Result<()> {
+    pub fn exec_script(&self, input: impl AsRef<str>) -> Result<()> {
+        log::debug!("Executing script {}", input.as_ref());
         let input = input.as_ref();
         self.lua.load(input).exec()?;
         Ok(())
@@ -161,6 +180,8 @@ impl Runtime {
 
     /// 执行别名回调
     pub fn exec_alias(&self, name: String, text: String) -> Result<()> {
+        log::debug!("Executing alias {}", name);
+        log::trace!("matched text={}", text);
         let alias = self.aliases.get(&name).ok_or_else(|| {
             Error::RuntimeError(format!("alias '{}' not found with text '{}'", &name, &text))
         })?;
@@ -173,6 +194,8 @@ impl Runtime {
 
     /// 创建别名
     fn create_alias(&mut self, alias: Alias) -> std::result::Result<(), Alias> {
+        log::debug!("Creating alias {}", alias.model.name);
+        log::trace!("pattern={}", alias.model.pattern);
         self.aliases.add(alias)
     }
 
@@ -185,6 +208,7 @@ impl Runtime {
 
     /// 删除别名
     fn delete_alias(&mut self, name: &str) -> Result<()> {
+        log::info!("Deleting alias {}", name);
         self.delete_alias_callback(name)?;
         self.aliases.remove(name);
         Ok(())
@@ -197,6 +221,8 @@ impl Runtime {
         text: String,
         styles: Vec<InlineStyle>,
     ) -> Result<()> {
+        log::debug!("Executing trigger {}", trigger.model.name);
+        log::trace!("matched text={}", text);
         let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_TRIGGER_CALLBACKS)?;
         let func: mlua::Function = callbacks.get(&trigger.model.name[..])?;
         let wildcards = trigger.captures(&text)?;
@@ -207,13 +233,23 @@ impl Runtime {
     /// 处理用户输出：命名参考MUSHClient
     pub fn process_user_output(&mut self, output: UserOutput) {
         match output {
-            UserOutput::Script(script) => self.process_user_script(script),
-            UserOutput::Cmd(cmd) => self.process_user_cmd(cmd),
+            UserOutput::Script(script) => {
+                self.queue.push(RuntimeEvent::ImmediateAction(
+                    RuntimeAction::ExecuteUserScript(script),
+                ));
+            }
+            UserOutput::Cmd(cmd) => {
+                self.queue.push(RuntimeEvent::ImmediateAction(
+                    RuntimeAction::ExecuteUserCmd(cmd),
+                ));
+            }
         }
     }
 
     /// 创建触发器
     fn create_trigger(&mut self, trigger: Trigger) -> std::result::Result<(), Trigger> {
+        log::debug!("Creating trigger {}", trigger.model.name);
+        log::trace!("pattern={}", trigger.model.pattern);
         self.triggers.add(trigger)
     }
 
@@ -226,8 +262,18 @@ impl Runtime {
 
     /// 删除触发器
     fn delete_trigger(&mut self, name: &str) -> Result<()> {
+        log::debug!("Deleting trigger {}", name);
         self.delete_trigger_callback(name)?;
         self.triggers.remove(name);
+        Ok(())
+    }
+
+    // 加载外部文件
+    fn load_file(&mut self, path: &str) -> Result<()> {
+        let mut file = File::open(path)?;
+        let mut text = String::new();
+        file.read_to_string(&mut text)?;
+        self.lua.load(&text).exec()?;
         Ok(())
     }
 
@@ -242,7 +288,7 @@ impl Runtime {
         let cmds = self.translate_cmds(cmd, self.cmd_delim, self.send_empty_cmd);
         if cmds.is_empty() {
             // 对于空字符，推送空行
-            self.queue.push_cmd("\n".to_owned());
+            self.queue.send_cmd("\n".to_owned());
             return;
         }
         for cmd in cmds {
@@ -251,12 +297,11 @@ impl Runtime {
                     if !s.ends_with('\n') {
                         s.push('\n');
                     }
-                    self.queue.push_cmd(s);
+                    self.queue.send_cmd(s);
                 }
                 PostCmd::Alias { name, text } => {
                     if let Err(e) = self.exec_alias(name, text) {
-                        let err = format_err(e.to_string());
-                        self.queue.push_styled_line(Line::fmt_err(err));
+                        self.push_err_to_ui(e.to_string());
                     }
                 }
             }
@@ -266,8 +311,7 @@ impl Runtime {
     /// 处理用户脚本
     fn process_user_script(&mut self, script: String) {
         if let Err(e) = self.exec_script(&script) {
-            let err = format_err(e.to_string());
-            self.queue.push_styled_line(Line::fmt_err(err));
+            self.push_err_to_ui(e.to_string());
         }
     }
 
@@ -286,8 +330,7 @@ impl Runtime {
         // 使用is_match预先匹配，最多一个触发器
         if let Some((trigger, text, styles)) = self.triggers.trigger_first(&self.cache) {
             if let Err(e) = self.exec_trigger(trigger, text, styles) {
-                let err = format_err(e.to_string());
-                self.queue.push_styled_line(Line::fmt_err(err));
+                self.push_err_to_ui(e.to_string());
             }
             // 对OneShot触发器进行删除
             if trigger.model.extra.one_shot() {
@@ -308,26 +351,27 @@ impl Runtime {
     /// 这是对原始字节流的处理，这里仅解码并处理换行
     pub fn process_bytes_from_mud(&mut self, bs: &[u8]) -> Result<()> {
         let s = self.mud_codec.decode(bs);
-        let s: Arc<str> = Arc::from(s);
+        // let s: Arc<str> = Arc::from(s);
         // log server output with ansi sequence
         if let Some(logger) = self.logger.as_mut() {
-            logger.write_all(s.as_ref().as_bytes())?;
+            logger.write_all(s.as_bytes())?;
         }
 
         // here just split into lines
         let mut lines = Vec::new();
         let mut start = 0usize;
-        while let Some(end) = s.as_ref()[start..].find('\n') {
+        while let Some(end) = s[start..].find('\n') {
             let end = start + end;
             let line = RawLine::new(s[start..end + 1].to_owned());
             lines.push(line);
             start = end + 1;
         }
-        if start < s.as_ref().len() {
-            let line = RawLine::new(s.as_ref()[start..].to_owned());
+        if start < s.len() {
+            let line = RawLine::new(s[start..].to_owned());
             lines.push(line);
         }
         // send to global event bus
+        log::trace!("coded {} lines from mud", lines.len());
         self.evttx.send(Event::WorldLines(lines))?;
         Ok(())
     }
@@ -403,6 +447,18 @@ impl Runtime {
                 if let Err(e) = self.delete_trigger(&name) {
                     log::warn!("delete trigger error {}", e);
                 }
+            }
+            RuntimeAction::LoadFile(path) => {
+                log::trace!("loading file '{}'", &path);
+                if let Err(e) = self.load_file(&path) {
+                    log::warn!("load file error {}", e);
+                }
+            }
+            RuntimeAction::ExecuteUserCmd(cmd) => {
+                self.process_user_cmd(cmd);
+            }
+            RuntimeAction::ExecuteUserScript(script) => {
+                self.process_user_script(script);
             }
         }
     }
@@ -491,14 +547,16 @@ impl Runtime {
         globals.set("SwitchCodec", switch_codec)?;
 
         // 重写print函数
-        let print = self.lua.create_function(move |_, s: ()| Ok(()))?;
+        let print = self.lua.create_function(move |_, _: ()| Ok(()))?;
         globals.set("print", print)?;
 
         // 初始化Send函数
         let queue = self.queue.clone();
         let send = self.lua.create_function(move |_, s: String| {
             log::trace!("Send function called");
-            queue.push_cmd(s);
+            queue.push(RuntimeEvent::ImmediateAction(
+                RuntimeAction::ExecuteUserCmd(s),
+            ));
             Ok(())
         })?;
         globals.set("Send", send)?;
@@ -507,7 +565,7 @@ impl Runtime {
         let queue = self.queue.clone();
         let note = self.lua.create_function(move |_, s: String| {
             log::trace!("Note function called");
-            queue.push_styled_line(Line::fmt_note(s));
+            queue.send_styled_line(Line::fmt_note(s));
             Ok(())
         })?;
         globals.set("Note", note)?;
@@ -521,7 +579,7 @@ impl Runtime {
                     let style = Style::default()
                         .fg(Color::from_str_or_default(fg, Color::Reset))
                         .bg(Color::from_str_or_default(bg, Color::Reset));
-                    queue.push_styled_line(Line::fmt_with_style(text, style));
+                    queue.send_styled_line(Line::fmt_with_style(text, style));
                     Ok(())
                 })?;
         globals.set("ColourNote", colour_note)?;
@@ -614,44 +672,56 @@ impl Runtime {
 
         // 触发器回调注册表
         let trigger_callbacks = self.lua.create_table()?;
-        self.lua.globals().set(GLOBAL_TRIGGER_CALLBACKS, trigger_callbacks)?;
+        self.lua
+            .globals()
+            .set(GLOBAL_TRIGGER_CALLBACKS, trigger_callbacks)?;
 
         // 初始化CreateTrigger函数
         let queue = self.queue.clone();
-        let create_trigger = self.lua.create_function(move |lua, (name, group, pattern, flags, match_lines, func): (String, String, String, u16, u8, mlua::Function)| {
-            if pattern.is_empty() {
-                return Err(mlua::Error::external(Error::RuntimeError(
-                    "empty pattern not allowed when creating trigger".to_owned(),
-                )));
-            }
-            let flags = TriggerFlags::from_bits(flags).ok_or_else(|| {
-                mlua::Error::external(Error::RuntimeError(format!(
-                    "invalid trigger flags {}",
-                    flags
-                )))
-            })?;
+        let create_trigger = self.lua.create_function(
+            move |lua,
+                  (name, group, pattern, flags, match_lines, func): (
+                String,
+                String,
+                String,
+                u16,
+                u8,
+                mlua::Function,
+            )| {
+                if pattern.is_empty() {
+                    return Err(mlua::Error::external(Error::RuntimeError(
+                        "empty pattern not allowed when creating trigger".to_owned(),
+                    )));
+                }
+                let flags = TriggerFlags::from_bits(flags).ok_or_else(|| {
+                    mlua::Error::external(Error::RuntimeError(format!(
+                        "invalid trigger flags {}",
+                        flags
+                    )))
+                })?;
 
-            let trigger_callbacks: mlua::Table = lua.globals().get(GLOBAL_TRIGGER_CALLBACKS)?;
-            if trigger_callbacks.contains_key(name.to_owned())? {
-                return Err(mlua::Error::external(Error::RuntimeError(format!(
-                    "trigger callback '{}' already exists",
-                    &name
-                ))));
-            }
-            let model = TriggerModel{
-                name,
-                group,
-                pattern,
-                extra: TriggerExtra{match_lines,flags},
-            };
-            let trigger = model.compile().map_err(|e| mlua::Error::external(e))?;
-            // 同alias
-            trigger_callbacks.set(trigger.model.name.to_owned(), func)?;
-            queue.push(RuntimeEvent::ImmediateAction(RuntimeAction::CreateTrigger(
-                trigger
-            )));
-            Ok(())
-        })?;
+                let trigger_callbacks: mlua::Table = lua.globals().get(GLOBAL_TRIGGER_CALLBACKS)?;
+                if trigger_callbacks.contains_key(name.to_owned())? {
+                    return Err(mlua::Error::external(Error::RuntimeError(format!(
+                        "trigger callback '{}' already exists",
+                        &name
+                    ))));
+                }
+                let model = TriggerModel {
+                    name,
+                    group,
+                    pattern,
+                    extra: TriggerExtra { match_lines, flags },
+                };
+                let trigger = model.compile().map_err(|e| mlua::Error::external(e))?;
+                // 同alias
+                trigger_callbacks.set(trigger.model.name.to_owned(), func)?;
+                queue.push(RuntimeEvent::ImmediateAction(RuntimeAction::CreateTrigger(
+                    trigger,
+                )));
+                Ok(())
+            },
+        )?;
         globals.set("CreateTrigger", create_trigger)?;
 
         let queue = self.queue.clone();
@@ -662,29 +732,16 @@ impl Runtime {
             Ok(())
         })?;
         globals.set("DeleteTrigger", delete_trigger)?;
+
+        // 初始化LoadFile函数
+        let queue = self.queue.clone();
+        let load_file = self.lua.create_function(move |_, path: String| {
+            queue.push(RuntimeEvent::ImmediateAction(RuntimeAction::LoadFile(path)));
+            Ok(())
+        })?;
+        globals.set("LoadFile", load_file)?;
         Ok(())
     }
-}
-
-fn format_err(err: impl AsRef<str>) -> String {
-    let err = err.as_ref();
-    let err = if err.ends_with("\r\n") {
-        &err[..err.len() - 2]
-    } else if err.ends_with('\n') {
-        &err[..err.len() - 1]
-    } else {
-        &err
-    };
-    let mut s = String::new();
-    for p in err.split('\n') {
-        s.push_str(p);
-        if !p.ends_with('\r') {
-            s.push_str("\r\n");
-        } else {
-            s.push('\n');
-        }
-    }
-    s
 }
 
 #[derive(Debug, Clone)]
@@ -718,8 +775,8 @@ pub enum PostCmd {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossbeam_channel::{unbounded, Receiver};
     use crate::ui::span::Span;
+    use crossbeam_channel::{unbounded, Receiver};
 
     #[test]
     fn test_process_single_user_cmd() {
@@ -793,12 +850,15 @@ mod tests {
     #[test]
     fn test_process_simple_trigger() {
         let (mut rt, _) = new_runtime().unwrap();
-        rt.lua.load(
-            r#"
+        rt.lua
+            .load(
+                r#"
             local f = function() Send("triggered") end
             CreateTrigger("trigger-f", "trg", "^张三走了过来。$", trigger_flag.Enabled, 1, f)
-            "#
-        ).exec().unwrap();
+            "#,
+            )
+            .exec()
+            .unwrap();
         rt.process_queue();
         rt.process_world_line(RawLine::new("张三走了过来。\r\n"));
         let mut evts = rt.process_queue();
@@ -806,9 +866,15 @@ mod tests {
         let mut rawlines = RawLines::unbounded();
         rawlines.push_line(RawLine::new("张三走了过来。\r\n"));
         let mut lines = Lines::new();
-        lines.push_line(Line::new(vec![Span::new("张三走了过来。\r\n", Style::default())]));
+        lines.push_line(Line::new(vec![Span::new(
+            "张三走了过来。\r\n",
+            Style::default(),
+        )]));
         assert_eq!(RuntimeOutput::ToUI(rawlines, lines), evts.remove(0));
-        assert_eq!(RuntimeOutput::ToServer("triggered\n".to_owned()), evts.remove(0));
+        assert_eq!(
+            RuntimeOutput::ToServer("triggered\n".to_owned()),
+            evts.remove(0)
+        );
     }
 
     #[test]
@@ -830,10 +896,46 @@ mod tests {
         rawlines.push_line(RawLine::new("张三走了过来。\r\n"));
         rawlines.push_line(RawLine::new("李四走了过来。\r\n"));
         let mut lines = Lines::new();
-        lines.push_line(Line::new(vec![Span::new("张三走了过来。\r\n", Style::default())]));
-        lines.push_line(Line::new(vec![Span::new("李四走了过来。\r\n", Style::default())]));
+        lines.push_line(Line::new(vec![Span::new(
+            "张三走了过来。\r\n",
+            Style::default(),
+        )]));
+        lines.push_line(Line::new(vec![Span::new(
+            "李四走了过来。\r\n",
+            Style::default(),
+        )]));
         assert_eq!(RuntimeOutput::ToUI(rawlines, lines), evts.remove(0));
-        assert_eq!(RuntimeOutput::ToServer("triggered\n".to_owned()), evts.remove(0));
+        assert_eq!(
+            RuntimeOutput::ToServer("triggered\n".to_owned()),
+            evts.remove(0)
+        );
+    }
+
+    #[test]
+    fn test_process_wildcard_trigger() {
+        let (mut rt, _) = new_runtime().unwrap();
+        rt.lua
+            .load(
+                r#"
+            local f = function(name, line, wildcards) Send(wildcards[1]) end
+            CreateTrigger("trigger-f", "trg", "^(.*)走了过来。$", trigger_flag.Enabled, 1, f)
+            "#,
+            )
+            .exec()
+            .unwrap();
+        rt.process_queue();
+        rt.process_world_line(RawLine::new("张三走了过来。\r\n"));
+        let mut evts = rt.process_queue();
+        assert_eq!(2, evts.len());
+        let mut rawlines = RawLines::unbounded();
+        rawlines.push_line(RawLine::new("张三走了过来。\r\n"));
+        let mut lines = Lines::new();
+        lines.push_line(Line::new(vec![Span::new(
+            "张三走了过来。\r\n",
+            Style::default(),
+        )]));
+        assert_eq!(RuntimeOutput::ToUI(rawlines, lines), evts.remove(0));
+        assert_eq!(RuntimeOutput::ToServer("张三\n".to_owned()), evts.remove(0));
     }
 
     fn assert_eq_str(expect: impl AsRef<str>, actual: RuntimeEvent) {

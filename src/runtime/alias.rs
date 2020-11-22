@@ -1,6 +1,6 @@
+use crate::error::Result;
 use crate::runtime::model::{MapModelStore, Model, ModelExec, ModelExtra};
 use bitflags::bitflags;
-use crate::error::Result;
 use regex::Regex;
 
 pub type Aliases = MapModelStore<Alias>;
@@ -10,7 +10,6 @@ pub type Alias = ModelExec<AliasModel>;
 pub type AliasModel = Model<AliasFlags>;
 
 impl Model<AliasFlags> {
-
     pub fn compile(self) -> Result<Alias> {
         let re = Regex::new(&self.pattern)?;
         Ok(ModelExec::new(self, re))

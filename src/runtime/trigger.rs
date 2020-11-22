@@ -1,6 +1,6 @@
+use crate::error::Result;
 use crate::runtime::cache::{CacheText, InlineStyle};
 use crate::runtime::model::{MapModelStore, Model, ModelExec, ModelExtra};
-use crate::error::Result;
 use bitflags::bitflags;
 use regex::Regex;
 use std::borrow::Cow;

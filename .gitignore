@@ -26,4 +26,4 @@ mudterm-core/data/
 .vscode/
 
 sync.sh
-
+lua/init.lua

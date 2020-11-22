@@ -13,11 +13,12 @@ use server::{QuitServer, Server};
 use standalone::{QuitStandalone, Standalone};
 use std::fs::File;
 use std::net::{TcpListener, TcpStream};
+use std::time::Duration;
 
 /// standalone app
 pub fn standalone(config: Config) -> Result<()> {
     let (evttx, evtrx) = unbounded();
-    let world_addr = config.world.addr.clone();
+    // let world_addr = config.world.addr.clone();
     let serverlog = File::create(&config.server.log_file)?;
 
     // 1. init runtime
@@ -27,9 +28,9 @@ pub fn standalone(config: Config) -> Result<()> {
     rt.init()?;
 
     // 2. connect to mud
-    log::info!("connecting to world {}", world_addr);
+    log::info!("connecting to world {}", &config.world.addr);
     let (from_mud, to_mud) = {
-        let from_mud = TcpStream::connect(world_addr)?;
+        let from_mud = server::connect_world(&config.world.addr, Duration::from_secs(3))?;
         let to_mud = from_mud.try_clone()?;
         (from_mud, to_mud)
     };

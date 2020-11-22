@@ -70,23 +70,17 @@ impl Default for Client {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Term {
-    pub max_lines: usize,
     pub echo_cmd: bool,
     pub cmd_delim: char,
     pub send_empty_cmd: bool,
-    pub reserve_cr: bool,
-    pub pad_non_cjk: bool,
 }
 
 impl Default for Term {
     fn default() -> Self {
         Self {
-            max_lines: 1000,
             echo_cmd: false,
             cmd_delim: ';',
             send_empty_cmd: false,
-            reserve_cr: false,
-            pad_non_cjk: false,
         }
     }
 }

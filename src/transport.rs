@@ -54,10 +54,11 @@ where
                     log::trace!("TelnetNegotiation[command={}, option={}]", command, option);
                 }
                 TelnetEvents::DataReceive(bs) => {
-                    // text.extend(bs);
+                    log::trace!("TelnetDataReceive[len={}]", bs.len());
                     self.buf.push_back(TelnetEvent::Text(bs));
                 }
                 TelnetEvents::DataSend(bs) => {
+                    log::trace!("TelnetDataSend[len={}]", bs.len());
                     self.buf.push_back(TelnetEvent::DataToSend(bs));
                 }
                 TelnetEvents::Subnegotiation(TelnetSubnegotiation { option, buffer }) => {

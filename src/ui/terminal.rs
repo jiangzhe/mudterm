@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::ui::ansi::clear::ClearCells;
 use crate::ui::buffer::BufferVec;
 use crate::ui::buffer::{Buffer, Cell};
@@ -107,6 +107,7 @@ fn draw_updates<W: Write>(out: &mut W, updates: Vec<(u16, u16, Cell)>) -> Result
                     ClearCells(next_x - start_x)
                 )?;
                 //执行写入
+                write!(out, "{}", termion::style::Reset)?;
                 for cell in line.drain(..) {
                     write!(out, "{}{}", cell.style(), cell.symbol.ch)?;
                 }

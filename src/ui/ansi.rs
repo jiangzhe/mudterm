@@ -1,6 +1,5 @@
 use crate::ui::span::Span;
 use crate::ui::style::{Color, Modifier, Style};
-use std::sync::Arc;
 
 pub mod clear {
 
@@ -18,10 +17,8 @@ pub mod clear {
 #[derive(Debug)]
 pub struct AnsiParser {
     style: Style,
-    // spaces_per_tab: usize,
-    reserve_cr: bool,
     // buffer string to handle incomplete ansi sequence
-    buf: Option<Arc<str>>,
+    buf: Option<String>,
     next: usize,
 }
 
@@ -29,25 +26,17 @@ impl AnsiParser {
     pub fn new() -> Self {
         Self {
             style: Style::default(),
-            reserve_cr: false,
             buf: None,
             next: 0,
         }
     }
 
-    pub fn reserve_cr(mut self, reserve_cr: bool) -> Self {
-        self.reserve_cr = reserve_cr;
-        self
-    }
-
     pub fn fill(&mut self, input: impl Into<String>) {
-        match self.buf.take() {
+        match self.buf.as_mut() {
             Some(buf) => {
-                let mut s = buf.as_ref().to_owned();
-                s.push_str(&input.into());
-                self.buf = Some(Arc::from(s));
+                buf.push_str(&input.into());
             }
-            None => self.buf = Some(Arc::from(input.into())),
+            None => self.buf = Some(input.into()),
         }
     }
 
@@ -79,17 +68,21 @@ impl AnsiParser {
             return Snippet::End;
         }
         let buf = self.buf.as_ref().unwrap();
-        if start == buf.as_ref().len() {
+        if start == buf.len() {
             return Snippet::End;
         }
-        if buf.as_ref()[start..].starts_with("\x1b[") {
+        if start + 1 == buf.len() && buf[start..].starts_with('\x1b') {
+            // 报文恰好截断在ESC转义符上，需特殊处理，否则将导致死循环
+            return Snippet::Incomplete;
+        }
+        if buf[start..].starts_with("\x1b[") {
             let sgm_start = start + 2;
-            match self.parse_sgm(buf, sgm_start) {
+            match self.parse_sgm(&buf, sgm_start) {
                 Some((style, next)) => {
                     return Snippet::Style(style, next);
                 }
                 None => {
-                    log::warn!("unrecognized ansi escape: {:?}", &buf.as_ref()[sgm_start..]);
+                    log::warn!("unrecognized ansi escape: {:?}", &buf[sgm_start..]);
                     return Snippet::Incomplete;
                 }
             }
@@ -103,16 +96,16 @@ impl AnsiParser {
     fn parse_text(&self, start: usize) -> Option<(Span, usize)> {
         // probably parse the text
         let buf = self.buf.as_ref().cloned().unwrap();
-        match buf.as_ref()[start..].find(|c| c == '\x1b' || c == '\n') {
+        match buf[start..].find(|c| c == '\x1b' || c == '\n') {
             None => {
                 // 整体都是文本，且无断行
-                let buflen = buf.as_ref().len();
+                let buflen = buf.len();
                 let span = Span::new(&buf[start..buflen], self.style);
                 Some((span, buflen))
             }
             Some(pos) => {
                 let pos = start + pos;
-                let c = buf.as_ref().as_bytes()[pos];
+                let c = buf.as_bytes()[pos];
                 if c == b'\x1b' {
                     let span = Span::new(&buf[start..pos], self.style);
                     Some((span, pos))
@@ -125,21 +118,21 @@ impl AnsiParser {
         }
     }
 
-    fn parse_sgm(&self, buf: &Arc<str>, start: usize) -> Option<(Style, usize)> {
-        if start == buf.as_ref().len() {
+    fn parse_sgm(&self, buf: &str, start: usize) -> Option<(Style, usize)> {
+        if start == buf.len() {
             // 不完整
             return None;
         }
 
-        buf.as_ref()[start..]
+        buf[start..]
             .find(|c| c != ';' && (c < '0' || c > '9'))
             .map(|pos| {
                 let pos = start + pos;
-                match buf.as_ref().as_bytes()[pos] {
+                match buf.as_bytes()[pos] {
                     b'm' => {
                         let mut style = self.style;
                         let mut n = 0;
-                        for c in buf.as_ref()[start..pos].chars() {
+                        for c in buf[start..pos].chars() {
                             match c {
                                 ';' => {
                                     style = apply_ansi_sgr(style, n);
@@ -162,10 +155,7 @@ impl AnsiParser {
                         (self.style, pos + 1)
                     }
                     _ => {
-                        log::error!(
-                            "unsupported CSI sequence {:?}",
-                            buf.as_ref()[start..=pos].as_bytes()
-                        );
+                        log::error!("unsupported CSI sequence {:?}", buf[start..=pos].as_bytes());
                         (self.style, pos + 1)
                     }
                 }

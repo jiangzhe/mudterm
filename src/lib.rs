@@ -4,6 +4,7 @@ pub mod codec;
 pub mod conf;
 pub mod error;
 pub mod event;
+pub mod map;
 pub mod protocol;
 pub mod runtime;
 pub mod signal;
