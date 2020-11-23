@@ -99,10 +99,18 @@ impl MudCodec {
         s
     }
 
-    pub fn encode(&mut self, s: &str) -> Result<Vec<u8>> {
+    pub fn encode(&self, s: &str) -> Result<Vec<u8>> {
         let mut output = Vec::new();
         self.encoder.encode_to(s, &mut output)?;
         Ok(output)
+    }
+
+    pub fn encoder(&self) -> &Encoder {
+        &self.encoder
+    }
+
+    pub fn decoder(&mut self) -> &mut Decoder {
+        &mut self.decoder
     }
 }
 

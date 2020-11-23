@@ -2,7 +2,7 @@ use crate::auth;
 use crate::error::{Error, Result};
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::protocol::Packet;
-use crate::runtime::{Runtime, RuntimeOutput, RuntimeOutputHandler};
+use crate::runtime::{Engine, EngineAction, RuntimeOutput, RuntimeOutputHandler};
 use crate::transport::{Outbound, Telnet, TelnetEvent};
 use crate::ui::line::RawLines;
 use crate::ui::UserOutput;
@@ -150,6 +150,7 @@ fn start_from_client_handle(mut conn: TcpStream, evttx: Sender<Event>) {
 
 /// server app
 pub struct Server {
+    evttx: Sender<Event>,
     worldtx: Sender<Vec<u8>>,
     pass: String,
     buffer: RawLines,
@@ -157,9 +158,10 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(worldtx: Sender<Vec<u8>>, pass: String, init_max_lines: usize) -> Self {
+    pub fn new(evttx: Sender<Event>, worldtx: Sender<Vec<u8>>, pass: String, init_max_lines: usize) -> Self {
         let buffer = RawLines::with_capacity(init_max_lines);
         Self {
+            evttx,
             worldtx,
             pass,
             buffer,
@@ -169,7 +171,7 @@ impl Server {
 }
 
 impl EventHandler for Server {
-    fn on_event(&mut self, evt: Event, rt: &mut Runtime) -> Result<NextStep> {
+    fn on_event(&mut self, evt: Event, engine: &mut Engine) -> Result<NextStep> {
         match evt {
             Event::NewClient(conn, addr) => {
                 log::info!("client connected from {:?}", addr);
@@ -180,7 +182,7 @@ impl EventHandler for Server {
                     );
                     return Ok(NextStep::Run);
                 }
-                let tx = start_to_client_handle(conn, self.pass.clone(), rt.evttx.clone());
+                let tx = start_to_client_handle(conn, self.pass.clone(), self.evttx.clone());
                 self.to_cli = Some((tx, addr));
             }
             Event::ClientAuthFail => {
@@ -197,7 +199,7 @@ impl EventHandler for Server {
                     // maybe client disconnected, discard this connection
                     return Ok(NextStep::Run);
                 }
-                start_from_client_handle(conn, rt.evttx.clone());
+                start_from_client_handle(conn, self.evttx.clone());
             }
             Event::ClientDisconnect => {
                 log::info!("client disconnected");
@@ -209,13 +211,10 @@ impl EventHandler for Server {
             }
             // 以下事件交给运行时处理
             Event::WorldBytes(bs) => {
-                rt.process_bytes_from_mud(&bs)?;
-            }
-            Event::WorldLines(lines) => {
-                rt.process_world_lines(lines);
+                engine.push(EngineAction::ParseWorldBytes(bs));
             }
             Event::UserOutput(output) => {
-                rt.process_user_output(output);
+                engine.push(EngineAction::ExecuteUserOutput(output));
             }
             Event::Tick => {
                 // todo: implements trigger by tick
@@ -236,13 +235,9 @@ impl EventHandler for Server {
 }
 
 impl RuntimeOutputHandler for Server {
-    fn on_runtime_output(&mut self, output: RuntimeOutput, rt: &mut Runtime) -> Result<NextStep> {
+    fn on_runtime_output(&mut self, output: RuntimeOutput) -> Result<NextStep> {
         match output {
-            RuntimeOutput::ToServer(mut s) => {
-                if !s.ends_with('\n') {
-                    s.push('\n');
-                }
-                let bs = rt.encode(&s)?;
+            RuntimeOutput::ToServer(bs) => {
                 self.worldtx.send(bs)?;
             }
             RuntimeOutput::ToUI(raw, _) => {

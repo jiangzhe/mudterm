@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::runtime::{Runtime, RuntimeOutputHandler};
+use crate::runtime::{Engine, RuntimeOutputHandler};
 use crate::ui::line::RawLine;
 use crate::ui::UserOutput;
 use crossbeam_channel::Receiver;
@@ -14,7 +14,7 @@ pub enum Event {
     WorldBytes(Vec<u8>),
     /// lines from server with tui style
     // StyledLinesFromMud(VecDeque<StyledLine>),
-    WorldLines(Vec<RawLine>),
+    // WorldLines(Vec<RawLine>),
     // world disconnected, e.g idle for a lone time
     WorldDisconnected,
     /// user input line
@@ -50,7 +50,7 @@ pub enum Event {
 
 /// 事件回调
 pub trait EventHandler {
-    fn on_event(&mut self, evt: Event, rt: &mut Runtime) -> Result<NextStep>;
+    fn on_event(&mut self, evt: Event, engine: &mut Engine) -> Result<NextStep>;
 }
 
 /// 退出回调
@@ -67,7 +67,7 @@ pub enum NextStep {
 
 /// 事件循环
 pub struct EventLoop<EH, QH> {
-    rt: Runtime,
+    engine: Engine,
     evtrx: Receiver<Event>,
     evt_hdl: EH,
     qt_hdl: QH,
@@ -78,9 +78,9 @@ where
     EH: EventHandler + RuntimeOutputHandler,
     QH: QuitHandler,
 {
-    pub fn new(rt: Runtime, evtrx: Receiver<Event>, evt_hdl: EH, qt_hdl: QH) -> Self {
+    pub fn new(engine: Engine, evtrx: Receiver<Event>, evt_hdl: EH, qt_hdl: QH) -> Self {
         Self {
-            rt,
+            engine,
             evtrx,
             evt_hdl,
             qt_hdl,
@@ -91,18 +91,18 @@ where
         'outer: loop {
             let evt = self.evtrx.recv()?;
             // 处理总线上的事件
-            match self.evt_hdl.on_event(evt, &mut self.rt)? {
+            match self.evt_hdl.on_event(evt, &mut self.engine)? {
                 NextStep::Quit => break,
                 NextStep::Skip => continue,
                 NextStep::Run => (),
             }
-            let outputs = self.rt.process_queue();
+            let outputs = self.engine.apply();
             if outputs.is_empty() {
                 continue;
             }
             // 处理运行时（衍生）事件
             for output in outputs {
-                match self.evt_hdl.on_runtime_output(output, &mut self.rt)? {
+                match self.evt_hdl.on_runtime_output(output)? {
                     NextStep::Quit => break 'outer,
                     _ => (),
                 }

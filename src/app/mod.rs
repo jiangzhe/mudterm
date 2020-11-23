@@ -6,7 +6,7 @@ use crate::auth;
 use crate::conf::Config;
 use crate::error::Result;
 use crate::event::EventLoop;
-use crate::runtime::Runtime;
+use crate::runtime::Engine;
 use client::{Client, QuitClient};
 use crossbeam_channel::unbounded;
 use server::{QuitServer, Server};
@@ -23,9 +23,9 @@ pub fn standalone(config: Config) -> Result<()> {
 
     // 1. init runtime
     log::info!("initilizing runtime with config");
-    let mut rt = Runtime::new(evttx.clone(), &config);
-    rt.set_logger(serverlog);
-    rt.init()?;
+    let mut engine = Engine::new(&config);
+    engine.set_logger(serverlog);
+    engine.init()?;
 
     // 2. connect to mud
     log::info!("connecting to world {}", &config.world.addr);
@@ -56,7 +56,7 @@ pub fn standalone(config: Config) -> Result<()> {
     // 7. run event loop on main thread
     let standalone_handler = Standalone::new(uitx, worldtx);
     let quit_handler = QuitStandalone::new(uihandle);
-    let eventloop = EventLoop::new(rt, evtrx, standalone_handler, quit_handler);
+    let eventloop = EventLoop::new(engine, evtrx, standalone_handler, quit_handler);
     eventloop.run()?;
 
     Ok(())
@@ -71,9 +71,9 @@ pub fn client(config: Config) -> Result<()> {
 
     // 1. init runtime
     log::info!("initilizing runtime with config");
-    let mut rt = Runtime::new(evttx.clone(), &config);
-    rt.set_logger(clientlog);
-    rt.init()?;
+    let mut engine = Engine::new(&config);
+    engine.set_logger(clientlog);
+    engine.init()?;
 
     // 2. connect to server
     log::info!("connecting to server {}", server_addr);
@@ -105,7 +105,7 @@ pub fn client(config: Config) -> Result<()> {
     // 7. run event loop on main thread
     let client_handler = Client::new(uitx, srvtx);
     let quit_handler = QuitClient::new(uihandle);
-    let eventloop = EventLoop::new(rt, evtrx, client_handler, quit_handler);
+    let eventloop = EventLoop::new(engine, evtrx, client_handler, quit_handler);
     eventloop.run()?;
 
     Ok(())
@@ -122,9 +122,9 @@ pub fn server(config: Config) -> Result<()> {
 
     // 1. init runtime
     log::info!("initilizing runtime with config");
-    let mut rt = Runtime::new(evttx.clone(), &config);
-    rt.set_logger(serverlog);
-    rt.init()?;
+    let mut engine = Engine::new(&config);
+    engine.set_logger(serverlog);
+    engine.init()?;
 
     // 2. connect to mud
     log::info!("connecting to mud server {:?}", world_addr);
@@ -143,11 +143,11 @@ pub fn server(config: Config) -> Result<()> {
     log::info!("starting thread handling message to mud server");
     let worldtx = server::start_to_mud_handle(evttx.clone(), to_mud);
     log::info!("starting thread handling message from mud server");
-    server::start_from_mud_handle(evttx, from_mud);
+    server::start_from_mud_handle(evttx.clone(), from_mud);
 
     // 7. run event loop on main thread
-    let client_handler = Server::new(worldtx, pass, init_max_lines);
-    let eventloop = EventLoop::new(rt, evtrx, client_handler, QuitServer);
+    let server_handler = Server::new(evttx.clone(), worldtx, pass, init_max_lines);
+    let eventloop = EventLoop::new(engine, evtrx, server_handler, QuitServer);
     eventloop.run()?;
 
     Ok(())

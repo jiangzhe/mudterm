@@ -144,6 +144,29 @@ impl Lines {
         self.0.push(line);
     }
 
+    /// 对错误信息进行特殊处理，替换换行符为空格
+    pub fn fmt_err(content: impl AsRef<str>) -> Self {
+        let content = content.as_ref();
+        let content = if content.ends_with('\n') {
+            &content[..content.len()-1]
+        } else {
+            content
+        };
+        let mut lines = Self::new();
+        for line in content.split('\n') {
+            let line = if line.ends_with('\r') {
+                &line[..line.len()-1]
+            } else {
+                line
+            };
+            lines.push_line(Line::new(vec![
+                Span::fmt_err(content),
+                Span::new("\r\n", Style::default().remove_modifier(Modifier::all())),
+            ]));
+        }
+        lines
+    }
+
     pub fn into_vec(self) -> Vec<Line> {
         self.0
     }
@@ -180,23 +203,6 @@ impl Line {
 
     pub fn fmt_note(content: impl Into<String>) -> Self {
         Self(vec![Span::fmt_note(content)])
-    }
-
-    pub fn fmt_err(content: impl Into<String>) -> Self {
-        let mut content: String = content.into();
-        loop {
-            if content.ends_with("\r\n") {
-                content.truncate(content.len() - 2);
-            } else if content.ends_with('\n') {
-                content.truncate(content.len() - 1);
-            } else {
-                break;
-            }
-        }
-        Self(vec![
-            Span::fmt_err(content),
-            Span::new("\r\n", Style::default().remove_modifier(Modifier::all())),
-        ])
     }
 
     pub fn fmt_raw(content: impl Into<String>) -> Self {

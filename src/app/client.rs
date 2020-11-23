@@ -2,9 +2,10 @@ use crate::conf;
 use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::protocol::Packet;
-use crate::runtime::{Runtime, RuntimeOutput, RuntimeOutputHandler};
+use crate::runtime::{Engine, EngineAction, RuntimeOutput, RuntimeOutputHandler};
 use crate::signal;
 use crate::ui::{Screen, UIEvent};
+use crate::ui::line::Lines;
 use crate::userinput;
 use crossbeam_channel::{unbounded, Sender};
 use std::{io, thread};
@@ -122,7 +123,7 @@ impl Client {
 }
 
 impl EventHandler for Client {
-    fn on_event(&mut self, evt: Event, rt: &mut Runtime) -> Result<NextStep> {
+    fn on_event(&mut self, evt: Event, engine: &mut Engine) -> Result<NextStep> {
         match evt {
             Event::Quit => return Ok(NextStep::Quit),
             // 以下事件发送给UI线程处理
@@ -141,15 +142,18 @@ impl EventHandler for Client {
             }
             // 以下事件交给运行时处理
             Event::LinesFromServer(lines) => {
-                rt.process_world_lines(lines);
+                engine.push(EngineAction::ProcessWorldLines(lines));
             }
             Event::UserOutput(output) => {
-                rt.process_user_output(output);
+                engine.push(EngineAction::ExecuteUserOutput(output));
             }
             Event::ServerDown => {
                 log::error!("server down or not reachable");
                 // let user quit
-                rt.push_err_to_ui("与服务器断开了连接，请关闭并重新连接");
+                let err_lines = Lines::fmt_err("与服务器断开了连接，请关闭并重新连接");
+                for err_line in err_lines.into_vec() {
+                    engine.push(EngineAction::SendLineToUI(err_line, None));
+                }
             }
             // client模式不支持客户端连接
             Event::NewClient(..)
@@ -158,7 +162,6 @@ impl EventHandler for Client {
             | Event::ClientDisconnect
             | Event::TelnetBytes(_)
             | Event::WorldBytes(_)
-            | Event::WorldLines(_)
             | Event::WorldDisconnected => {
                 unreachable!("standalone mode does not support event {:?}", evt);
             }
@@ -168,13 +171,10 @@ impl EventHandler for Client {
 }
 
 impl RuntimeOutputHandler for Client {
-    fn on_runtime_output(&mut self, output: RuntimeOutput, _rt: &mut Runtime) -> Result<NextStep> {
+    fn on_runtime_output(&mut self, output: RuntimeOutput) -> Result<NextStep> {
         match output {
-            RuntimeOutput::ToServer(mut s) => {
-                if !s.ends_with('\n') {
-                    s.push('\n');
-                }
-                self.srvtx.send(Packet::Text(s))?;
+            RuntimeOutput::ToServer(bs) => {
+                self.srvtx.send(Packet::Text(String::from_utf8(bs).unwrap()))?;
             }
             RuntimeOutput::ToUI(_, styled) => {
                 self.uitx.send(UIEvent::Lines(styled))?;
