@@ -16,7 +16,7 @@ impl OutputQueue {
         Self(Arc::new(Mutex::new(VecDeque::new())))
     }
 
-    pub fn push_line(&self, raw: RawLine, styled: Line) {
+    pub fn send_line(&self, raw: RawLine, styled: Line) {
         self.send_raw_line(raw);
         self.send_styled_line(styled);
     }

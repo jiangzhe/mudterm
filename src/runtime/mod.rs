@@ -5,6 +5,7 @@ pub mod queue;
 pub mod sub;
 pub mod timer;
 pub mod trigger;
+pub mod engine;
 
 use crate::codec::{Codec, MudCodec};
 use crate::conf;
@@ -60,8 +61,10 @@ pub enum RuntimeAction {
     SwitchCodec(Codec),
     CreateAlias(Alias),
     DeleteAlias(String),
+    EnableAliasGroup(String, bool),
     CreateTrigger(Trigger),
     DeleteTrigger(String),
+    EnableTriggerGroup(String, bool),
     LoadFile(String),
     ExecuteUserCmd(String),
     ExecuteUserScript(String),
@@ -208,9 +211,16 @@ impl Runtime {
 
     /// 删除别名
     fn delete_alias(&mut self, name: &str) -> Result<()> {
-        log::info!("Deleting alias {}", name);
+        log::debug!("Deleting alias {}", name);
         self.delete_alias_callback(name)?;
         self.aliases.remove(name);
+        Ok(())
+    }
+
+    fn enable_alias_group(&mut self, name: &str, enabled: bool) -> Result<()> {
+        log::debug!("Enabling alias group {}, enabled={}", name, enabled);
+        let n = self.aliases.enable_group(name, enabled);
+        log::trace!("{} aliases effected", n);
         Ok(())
     }
 
@@ -268,8 +278,16 @@ impl Runtime {
         Ok(())
     }
 
+    fn enable_trigger_group(&mut self, name: &str, enabled: bool) -> Result<()> {
+        log::debug!("Enabling trigger group {}, enabled={}", name, enabled);
+        let n = self.triggers.enable_group(name, enabled);
+        log::trace!("{} triggers effected", n);
+        Ok(())
+    }
+
     // 加载外部文件
     fn load_file(&mut self, path: &str) -> Result<()> {
+        log::debug!("Loading file {}", path);
         let mut file = File::open(path)?;
         let mut text = String::new();
         file.read_to_string(&mut text)?;
@@ -326,7 +344,7 @@ impl Runtime {
         // 添加进文本缓存，供触发器进行匹配
         self.cache.push_line(&styled);
         // 推送到事件队列
-        self.queue.push_line(raw, styled);
+        self.queue.send_line(raw, styled);
         // 使用is_match预先匹配，最多一个触发器
         if let Some((trigger, text, styles)) = self.triggers.trigger_first(&self.cache) {
             if let Err(e) = self.exec_trigger(trigger, text, styles) {
@@ -345,6 +363,14 @@ impl Runtime {
     pub fn process_world_lines(&mut self, lines: impl IntoIterator<Item = RawLine>) {
         for line in lines {
             self.process_world_line(line);
+            // 这里，每处理一行，都需要将操作立即执行
+            // 否则可能导致先前行开启/关闭的触发器对后续行
+            // 的不正确的影响。
+            // todo: 交由专门的引擎来做
+            let outputs = self.process_queue();
+            for output in outputs {
+                self.queue.push(RuntimeEvent::Output(output));
+            }
         }
     }
 
@@ -427,9 +453,13 @@ impl Runtime {
                 }
             }
             RuntimeAction::DeleteAlias(name) => {
-                log::trace!("deleting alias '{}'", name);
                 if let Err(e) = self.delete_alias(&name) {
                     log::warn!("delete alias error {}", e);
+                }
+            }
+            RuntimeAction::EnableAliasGroup(name, enabled) => {
+                if let Err(e) = self.enable_alias_group(&name, enabled) {
+                    log::warn!("enable alias group error {}", e);
                 }
             }
             RuntimeAction::CreateTrigger(trigger) => {
@@ -443,13 +473,16 @@ impl Runtime {
                 }
             }
             RuntimeAction::DeleteTrigger(name) => {
-                log::trace!("deleting trigger '{}'", name);
                 if let Err(e) = self.delete_trigger(&name) {
                     log::warn!("delete trigger error {}", e);
                 }
             }
+            RuntimeAction::EnableTriggerGroup(name, enabled) => {
+                if let Err(e) = self.enable_trigger_group(&name, enabled) {
+                    log::warn!("enable trigger group error {}", e);
+                }
+            }
             RuntimeAction::LoadFile(path) => {
-                log::trace!("loading file '{}'", &path);
                 if let Err(e) = self.load_file(&path) {
                     log::warn!("load file error {}", e);
                 }
@@ -614,6 +647,7 @@ impl Runtime {
                 u16,
                 mlua::Function,
             )| {
+                log::trace!("CreateAlias function called");
                 if pattern.is_empty() {
                     return Err(mlua::Error::external(Error::RuntimeError(
                         "empty pattern not allowed when creating alias".to_owned(),
@@ -656,6 +690,7 @@ impl Runtime {
         // 初始化DeleteAlias函数
         let queue = self.queue.clone();
         let delete_alias = self.lua.create_function(move |_, name: String| {
+            log::trace!("DeleteAlias function called");
             queue.push(RuntimeEvent::ImmediateAction(RuntimeAction::DeleteAlias(
                 name,
             )));
@@ -688,6 +723,7 @@ impl Runtime {
                 u8,
                 mlua::Function,
             )| {
+                log::trace!("CreateTrigger function called");
                 if pattern.is_empty() {
                     return Err(mlua::Error::external(Error::RuntimeError(
                         "empty pattern not allowed when creating trigger".to_owned(),
@@ -724,8 +760,10 @@ impl Runtime {
         )?;
         globals.set("CreateTrigger", create_trigger)?;
 
+        // 初始化DeleteTrigger函数
         let queue = self.queue.clone();
         let delete_trigger = self.lua.create_function(move |_, name: String| {
+            log::trace!("DeleteTrigger function called");
             queue.push(RuntimeEvent::ImmediateAction(RuntimeAction::DeleteTrigger(
                 name,
             )));
@@ -733,6 +771,15 @@ impl Runtime {
         })?;
         globals.set("DeleteTrigger", delete_trigger)?;
 
+        // 初始化EnableTriggerGroup函数
+        let queue = self.queue.clone();
+        let enable_trigger_group = self.lua.create_function(move |_, (name, enabled): (String, bool)| {
+            log::trace!("EnableTriggerGroup function called");
+            queue.push(RuntimeEvent::ImmediateAction(RuntimeAction::EnableTriggerGroup(name, enabled)));
+            Ok(())
+        })?;
+        globals.set("EnableTriggerGroup", enable_trigger_group)?;
+        
         // 初始化LoadFile函数
         let queue = self.queue.clone();
         let load_file = self.lua.create_function(move |_, path: String| {
@@ -740,6 +787,7 @@ impl Runtime {
             Ok(())
         })?;
         globals.set("LoadFile", load_file)?;
+
         Ok(())
     }
 }
@@ -783,9 +831,9 @@ mod tests {
         let (mut rt, _) = new_runtime().unwrap();
         rt.process_user_output(UserOutput::Cmd("hp".to_owned()));
         assert_eq!(1, rt.queue.len());
-        let evt = rt.queue.drain_all().pop().unwrap();
-        assert_eq_str("hp\n", evt);
-        rt.process_user_output(UserOutput::Cmd("hp\nsay hi".to_owned()));
+        let mut evts = rt.process_queue();
+        // let evt = rt.queue.drain_all().pop().unwrap();
+        assert_eq!(RuntimeOutput::ToServer("hp\n".to_owned()), evts.pop().unwrap());
     }
 
     #[test]
@@ -793,13 +841,13 @@ mod tests {
         let (mut rt, _) = new_runtime().unwrap();
         rt.process_user_output(UserOutput::Cmd("hp;say hi".to_owned()));
         assert_eq!(1, rt.queue.len());
-        let mut evts = rt.queue.drain_all();
-        assert_eq_str("hp\nsay hi\n", evts.pop().unwrap());
+        let mut evts = rt.process_queue();
+        assert_eq!(RuntimeOutput::ToServer("hp\nsay hi\n".to_owned()), evts.pop().unwrap());
 
         rt.process_user_output(UserOutput::Cmd("hp\nsay hi".to_owned()));
         assert_eq!(1, rt.queue.len());
-        let mut evts = rt.queue.drain_all();
-        assert_eq_str("hp\nsay hi\n", evts.pop().unwrap());
+        let mut evts = rt.process_queue();
+        assert_eq!(RuntimeOutput::ToServer("hp\nsay hi\n".to_owned()), evts.pop().unwrap());
     }
 
     #[test]
@@ -936,11 +984,6 @@ mod tests {
         )]));
         assert_eq!(RuntimeOutput::ToUI(rawlines, lines), evts.remove(0));
         assert_eq!(RuntimeOutput::ToServer("张三\n".to_owned()), evts.remove(0));
-    }
-
-    fn assert_eq_str(expect: impl AsRef<str>, actual: RuntimeEvent) {
-        let expect = RuntimeEvent::Output(RuntimeOutput::ToServer(expect.as_ref().to_owned()));
-        assert_eq!(expect, actual);
     }
 
     fn new_runtime() -> Result<(Runtime, Receiver<Event>)> {

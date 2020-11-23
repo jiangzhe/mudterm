@@ -20,7 +20,7 @@ local create_trigger = function(args)
         args.match_lines = 1
     end
 
-    local callback = wrap_trigger_callback(func)
+    local callback = wrap_trigger_callback(args.func)
     CreateTrigger(args.name, args.group, args.pattern, args.flags, args.match_lines, callback)
 end
 
@@ -55,7 +55,7 @@ local create_alias = function(args)
     if not args.group then
         args.group = "default"
     end
-    local callback = wrap_alias_callback(func)
+    local callback = wrap_alias_callback(args.func)
     CreateAlias(args.name, args.group, args.pattern, args.flags, callback)
 end
 
