@@ -1,11 +1,11 @@
 use std::time::{Duration, Instant};
-use std::collections::{HashMap, BinaryHeap};
-use std::cmp::{Ord, Ordering};
+use std::collections::HashMap;
 use uuid::Uuid;
+use crate::runtime::delay_queue::{DelayQueue, Delay};
 
 #[derive(Debug)]
 pub struct Timers {
-    schedule: BinaryHeap<Timer>,
+    schedule: DelayQueue<Delay<Timer>>,
     models: HashMap<String, TimerModel>,
 }
 
@@ -13,9 +13,14 @@ impl Timers {
 
     pub fn new() -> Self {
         Self{
-            schedule: BinaryHeap::new(),
+            schedule: DelayQueue::new(),
             models: HashMap::new(),
         }
+    }
+
+    /// 获取调度队列，调度队列为线程安全
+    pub fn schedule(&self) -> DelayQueue<Delay<Timer>> {
+        self.schedule.clone()
     }
 
     pub fn insert(&mut self, tm: TimerModel) {
@@ -60,19 +65,18 @@ impl Timers {
         self.models.remove(name)
     }
 
-    pub fn on_schedule(&mut self) -> Option<Timer> {
-        let now = Instant::now();
-        while let Some(earliest) = self.schedule.peek() {
-            if earliest.schedule_time >= now {
-                let timer = self.schedule.pop().unwrap();
-                // 检查状态
-                if let Some(tm) = self.models.get(&timer.name) {
-                    if let Some(uuid) = tm.uuid {
-                        if timer.uuid == uuid && tm.enabled {
-                            // 只有在uuid相同且定时器被激活时，返回该
-                            // 定时任务，否则直接丢弃
-                            return Some(timer);
-                        }
+    /// 提取调度任务，若无满足条件者，将阻塞当前线程
+    pub fn pop_timeout(&mut self, duration: Duration) -> Option<Timer> {
+        let deadline = Instant::now() + duration;
+        while let Some(task) = self.schedule.pop_until(deadline) {
+            let timer = task.value;
+            // 检查状态
+            if let Some(tm) = self.models.get(&timer.name) {
+                if let Some(uuid) = tm.uuid {
+                    if timer.uuid == uuid && tm.enabled {
+                        // 只有在uuid相同且定时器被激活时，返回该
+                        // 定时任务，否则直接丢弃
+                        return Some(timer);
                     }
                 }
             }
@@ -86,28 +90,7 @@ pub struct Timer {
     pub name: String,
     pub uuid: u128,
     tick_time: Duration,
-    schedule_time: Instant,
 }
-
-impl Ord for Timer {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other.schedule_time.cmp(&self.schedule_time)
-    }
-}
-
-impl PartialOrd for Timer {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for Timer {
-    fn eq(&self, other: &Self) -> bool {
-        self.schedule_time == other.schedule_time
-    }
-}
-
-impl Eq for Timer {}
 
 #[derive(Debug, Clone)]
 pub struct TimerModel {
@@ -132,7 +115,7 @@ impl TimerModel {
         }
     }
 
-    pub fn start(mut self) -> (Timer, TimerModel) {
+    pub fn start(mut self) -> (Delay<Timer>, TimerModel) {
         let next_time = Instant::now() + self.tick_time;
         // uuid将作为检验定时任务是否与当前定时器匹配的依据
         let uuid = Uuid::new_v4().as_u128();
@@ -141,9 +124,8 @@ impl TimerModel {
             name: self.name.to_owned(),
             uuid,
             tick_time: self.tick_time,
-            schedule_time: next_time,
         };
-        (timer, self)
+        (Delay::until(timer, next_time), self)
     }
 }
 
