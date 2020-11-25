@@ -1,14 +1,14 @@
 pub mod alias;
 pub mod cache;
+pub mod delay_queue;
+pub mod engine;
+pub mod init;
 pub mod model;
 pub mod queue;
 pub mod sub;
 pub mod timer;
 pub mod trigger;
-pub mod engine;
 pub mod vars;
-pub mod init;
-pub mod delay_queue;
 
 use crate::error::Result;
 use crate::event::NextStep;

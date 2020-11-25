@@ -1,5 +1,5 @@
 use crate::ui::span::Span;
-use crate::ui::style::{Color, Modifier, Style};
+use crate::ui::style::{Color, Style};
 use crate::ui::width::AppendWidthTab8;
 use std::collections::VecDeque;
 
@@ -148,20 +148,20 @@ impl Lines {
     pub fn fmt_err(content: impl AsRef<str>) -> Self {
         let content = content.as_ref();
         let content = if content.ends_with('\n') {
-            &content[..content.len()-1]
+            &content[..content.len() - 1]
         } else {
             content
         };
         let mut lines = Self::new();
         for line in content.split('\n') {
             let line = if line.ends_with('\r') {
-                &line[..line.len()-1]
+                &line[..line.len() - 1]
             } else {
                 line
             };
             lines.push_line(Line::new(vec![
-                Span::fmt_err(content),
-                Span::new("\r\n", Style::default().remove_modifier(Modifier::all())),
+                Span::fmt_err(line),
+                Span::new("\r\n", Style::default()),
             ]));
         }
         lines

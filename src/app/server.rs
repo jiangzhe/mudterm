@@ -158,7 +158,12 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(evttx: Sender<Event>, worldtx: Sender<Vec<u8>>, pass: String, init_max_lines: usize) -> Self {
+    pub fn new(
+        evttx: Sender<Event>,
+        worldtx: Sender<Vec<u8>>,
+        pass: String,
+        init_max_lines: usize,
+    ) -> Self {
         let buffer = RawLines::with_capacity(init_max_lines);
         Self {
             evttx,

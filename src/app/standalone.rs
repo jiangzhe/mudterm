@@ -1,8 +1,8 @@
 use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::runtime::{Engine, EngineAction, RuntimeOutput, RuntimeOutputHandler};
-use crate::ui::UIEvent;
 use crate::ui::line::Lines;
+use crate::ui::UIEvent;
 use crossbeam_channel::Sender;
 use std::thread;
 

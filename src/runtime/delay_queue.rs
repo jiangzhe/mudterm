@@ -1,7 +1,7 @@
-use std::time::{Duration, Instant};
-use std::sync::{Arc, Mutex, Condvar};
-use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub struct DelayQueue<T> {
@@ -9,13 +9,22 @@ pub struct DelayQueue<T> {
 }
 
 impl<T: Delayed> DelayQueue<T> {
-
     pub fn new() -> Self {
-        Self{data: Arc::new(Data{queue: Mutex::new(BinaryHeap::new()), new_head: Condvar::new()})}
+        Self {
+            data: Arc::new(Data {
+                queue: Mutex::new(BinaryHeap::new()),
+                new_head: Condvar::new(),
+            }),
+        }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
-        Self{data: Arc::new(Data{queue: Mutex::new(BinaryHeap::with_capacity(capacity)), new_head: Condvar::new()})}
+        Self {
+            data: Arc::new(Data {
+                queue: Mutex::new(BinaryHeap::with_capacity(capacity)),
+                new_head: Condvar::new(),
+            }),
+        }
     }
 
     pub fn pop(&self) -> T {
@@ -51,7 +60,8 @@ impl<T: Delayed> DelayQueue<T> {
                 if now >= deadline {
                     return None;
                 }
-                let wait_time = Instant::min(deadline, head.delay_until()).saturating_duration_since(now);
+                let wait_time =
+                    Instant::min(deadline, head.delay_until()).saturating_duration_since(now);
                 queue = self.data.new_head.wait_timeout(queue, wait_time).unwrap().0;
             } else {
                 if now >= deadline {
@@ -96,13 +106,15 @@ pub struct Delay<T> {
 }
 
 impl<T> Delay<T> {
-
     pub fn until(value: T, until: Instant) -> Self {
-        Self{value, until}
+        Self { value, until }
     }
 
     pub fn delay(value: T, duration: Duration) -> Self {
-        Self{value, until: Instant::now() + duration}
+        Self {
+            value,
+            until: Instant::now() + duration,
+        }
     }
 }
 
@@ -140,7 +152,10 @@ mod tests {
     #[test]
     fn test_delay_queue_pop() {
         let queue = DelayQueue::new();
-        queue.push(Delay::until(100, Instant::now() + Duration::from_millis(100)));
+        queue.push(Delay::until(
+            100,
+            Instant::now() + Duration::from_millis(100),
+        ));
         queue.push(Delay::until(50, Instant::now() + Duration::from_millis(50)));
         assert_eq!(50, queue.pop().value);
         assert_eq!(100, queue.pop().value);
@@ -149,7 +164,10 @@ mod tests {
     #[test]
     fn test_delay_queue_timeout() {
         let queue = DelayQueue::new();
-        queue.push(Delay::until(500, Instant::now() + Duration::from_millis(500)));
+        queue.push(Delay::until(
+            500,
+            Instant::now() + Duration::from_millis(500),
+        ));
         queue.push(Delay::until(50, Instant::now() + Duration::from_millis(50)));
         assert_eq!(50, queue.pop().value);
         assert!(queue.pop_timeout(Duration::from_millis(200)).is_none());

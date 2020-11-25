@@ -1,7 +1,7 @@
-use std::sync::{Arc, RwLock};
-use std::collections::HashMap;
 use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::hash::Hash;
+use std::sync::{Arc, RwLock};
 
 /// 脚本环境中的变量存储和查询
 #[derive(Debug, Clone)]

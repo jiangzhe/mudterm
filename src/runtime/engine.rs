@@ -1,18 +1,18 @@
 use crate::codec::{Codec, MudCodec};
 use crate::conf;
+use crate::error::{Error, Result};
 use crate::runtime::alias::Alias;
-use crate::runtime::trigger::Trigger;
-use crate::ui::line::{RawLine, Line, Lines};
-use crate::error::{Result, Error};
-use crate::runtime::queue::{ActionQueue, OutputQueue};
-use crate::runtime::vars::Variables;
-use crate::runtime::model::ModelStore;
 use crate::runtime::alias::Aliases;
-use crate::runtime::trigger::Triggers;
 use crate::runtime::cache::{CacheText, InlineStyle};
-use crate::runtime::RuntimeOutput;
 use crate::runtime::init::init_lua;
+use crate::runtime::model::ModelStore;
+use crate::runtime::queue::{ActionQueue, OutputQueue};
+use crate::runtime::trigger::Trigger;
+use crate::runtime::trigger::Triggers;
+use crate::runtime::vars::Variables;
+use crate::runtime::RuntimeOutput;
 use crate::ui::ansi::AnsiParser;
+use crate::ui::line::{Line, Lines, RawLine};
 use crate::ui::UserOutput;
 use std::collections::VecDeque;
 use std::fs::File;
@@ -64,7 +64,6 @@ pub struct Engine {
 }
 
 impl Engine {
-
     pub fn new(config: &conf::Config) -> Self {
         Self {
             // evttx,
@@ -81,7 +80,6 @@ impl Engine {
             cmd_delim: config.term.cmd_delim,
             send_empty_cmd: config.term.send_empty_cmd,
             logger: None,
-            
         }
     }
 
@@ -167,12 +165,10 @@ impl Engine {
                     log::warn!("load file error {}", e);
                 }
             }
-            EngineAction::ExecuteUserOutput(output) => {
-                match output {
-                    UserOutput::Cmd(cmd) => self.process_user_cmd(cmd),
-                    UserOutput::Script(script) => self.process_user_script(script),
-                }
-            }
+            EngineAction::ExecuteUserOutput(output) => match output {
+                UserOutput::Cmd(cmd) => self.process_user_cmd(cmd),
+                UserOutput::Script(script) => self.process_user_script(script),
+            },
             EngineAction::ParseWorldBytes(bs) => {
                 if let Err(e) = self.parse_world_bytes(bs) {
                     log::warn!("parse raw bytes error {}", e);
@@ -342,7 +338,8 @@ impl Engine {
         // 添加进文本缓存，供触发器进行匹配
         self.cache.push_line(&styled);
         // 推送到事件队列
-        self.tmpq.push(EngineAction::SendLineToUI(styled, Some(raw)));
+        self.tmpq
+            .push(EngineAction::SendLineToUI(styled, Some(raw)));
         // 使用is_match预先匹配，最多一个触发器
         if let Some((trigger, text, styles)) = self.triggers.trigger_first(&self.cache) {
             if let Err(e) = self.exec_trigger(trigger, text, styles) {
@@ -353,7 +350,8 @@ impl Engine {
             }
             // 对OneShot触发器进行删除
             if trigger.model.extra.one_shot() {
-                self.tmpq.push(EngineAction::DeleteTrigger(trigger.model.name.to_owned()));
+                self.tmpq
+                    .push(EngineAction::DeleteTrigger(trigger.model.name.to_owned()));
             }
         }
     }
@@ -361,7 +359,11 @@ impl Engine {
     // 处理多行世界文本
     // 由于每一行都肯能触发脚本，改变后续文本的处理方式，因此需要在处理完
     // 每一行以后，运行临时操作队列直到其清空，方可处理下一行
-    fn process_world_lines(&mut self, lines: impl IntoIterator<Item = RawLine>, output: &mut OutputQueue) {
+    fn process_world_lines(
+        &mut self,
+        lines: impl IntoIterator<Item = RawLine>,
+        output: &mut OutputQueue,
+    ) {
         for line in lines {
             self.process_world_line(line);
             // 这里，每处理一行，都需要将操作立即执行
@@ -383,7 +385,7 @@ impl Engine {
             if i >= ITER_CNT {
                 log::error!("reach iteration limit {} on tmp action queue processing", i);
                 log::warn!("tmpq.len={}", self.tmpq.len());
-                log::warn!("tmpq={:?}", self.tmpq);    
+                log::warn!("tmpq={:?}", self.tmpq);
                 return;
             }
             let actions = self.tmpq.drain_all();
@@ -480,42 +482,58 @@ pub enum PostCmd {
     Alias { name: String, text: String },
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::UserOutput;
+    use crate::ui::line::{Line, RawLine, RawLines};
     use crate::ui::span::Span;
-    use crate::ui::line::{RawLine, RawLines, Line};
     use crate::ui::style::Style;
+    use crate::ui::UserOutput;
 
     #[test]
     fn test_engine_single_user_cmd() {
         let mut engine = new_engine().unwrap();
-        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd("hp".to_owned())));
+        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd(
+            "hp".to_owned(),
+        )));
         let mut evts = engine.apply();
         assert_eq!(1, evts.len());
-        assert_eq!(RuntimeOutput::ToServer(b"hp\n".to_vec()), evts.pop().unwrap());
+        assert_eq!(
+            RuntimeOutput::ToServer(b"hp\n".to_vec()),
+            evts.pop().unwrap()
+        );
     }
 
     #[test]
     fn test_engine_multi_user_cmds() {
         let mut engine = new_engine().unwrap();
-        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd("hp;say hi".to_owned())));
+        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd(
+            "hp;say hi".to_owned(),
+        )));
         let mut evts = engine.apply();
         assert_eq!(1, evts.len());
-        assert_eq!(RuntimeOutput::ToServer(b"hp\nsay hi\n".to_vec()), evts.pop().unwrap());
+        assert_eq!(
+            RuntimeOutput::ToServer(b"hp\nsay hi\n".to_vec()),
+            evts.pop().unwrap()
+        );
 
-        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd("hp\nsay hi".to_owned())));
+        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd(
+            "hp\nsay hi".to_owned(),
+        )));
         let mut evts = engine.apply();
         assert_eq!(1, evts.len());
-        assert_eq!(RuntimeOutput::ToServer(b"hp\nsay hi\n".to_vec()), evts.pop().unwrap());
+        assert_eq!(
+            RuntimeOutput::ToServer(b"hp\nsay hi\n".to_vec()),
+            evts.pop().unwrap()
+        );
     }
 
     #[test]
     fn test_engine_simple_alias() {
         let mut engine = new_engine().unwrap();
-        engine.lua.load(
+        engine
+            .lua
+            .load(
                 r#"
         local n = function() Send("north") end
         CreateAlias("alias-n", "map", "^n$", alias_flag.Enabled, n)
@@ -525,7 +543,9 @@ mod tests {
             .unwrap();
         engine.apply();
         // start user output
-        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd("n".to_owned())));
+        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd(
+            "n".to_owned(),
+        )));
         let mut outputs = engine.apply();
         assert_eq!(1, outputs.len());
         assert_eq!(
@@ -537,7 +557,8 @@ mod tests {
     #[test]
     fn test_engine_complex_alias() {
         let mut engine = new_engine().unwrap();
-        engine.lua
+        engine
+            .lua
             .load(
                 r#"
         local m = function(name, line, wildcards) Send(wildcards[1]..wildcards[2]) end
@@ -547,7 +568,9 @@ mod tests {
             .exec()
             .unwrap();
         engine.apply();
-        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd("x;num 123 456".to_owned())));
+        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd(
+            "x;num 123 456".to_owned(),
+        )));
         let mut outputs = engine.apply();
         assert_eq!(1, outputs.len());
         assert_eq!(
@@ -559,16 +582,23 @@ mod tests {
     #[test]
     fn test_engine_alias_add_trigger() {
         let mut engine = new_engine().unwrap();
-        engine.lua.load(
-            r#"
+        engine
+            .lua
+            .load(
+                r#"
             local addtr = function()
                 local trcb = function() end
                 CreateTrigger("tr1", "trg", "^say hi$", trigger_flag.Enabled, 1, trcb)
             end
             CreateAlias("alias-tr", "addtr", "^addtr$", alias_flag.Enabled, addtr)
-            "#).exec().unwrap();
+            "#,
+            )
+            .exec()
+            .unwrap();
         engine.apply();
-        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd("addtr".to_owned())));
+        engine.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd(
+            "addtr".to_owned(),
+        )));
         let outputs = engine.apply();
         assert!(outputs.is_empty());
         assert_eq!(1, engine.triggers.len());
@@ -578,7 +608,8 @@ mod tests {
     fn test_engine_simple_trigger() {
         let mut engine = new_engine().unwrap();
         engine.push(EngineAction::SwitchCodec(Codec::Utf8));
-        engine.lua
+        engine
+            .lua
             .load(
                 r#"
             local f = function() Send("triggered") end
@@ -588,7 +619,9 @@ mod tests {
             .exec()
             .unwrap();
         engine.apply();
-        engine.push(EngineAction::ProcessWorldLines(vec![RawLine::new("张三走了过来。\r\n")]));
+        engine.push(EngineAction::ProcessWorldLines(vec![RawLine::new(
+            "张三走了过来。\r\n",
+        )]));
         let mut evts = engine.apply();
         assert_eq!(2, evts.len());
         let mut rawlines = RawLines::unbounded();
@@ -645,7 +678,8 @@ mod tests {
         let mut engine = new_engine().unwrap();
         // 默认使用utf8编码
         engine.push(EngineAction::SwitchCodec(Codec::Utf8));
-        engine.lua
+        engine
+            .lua
             .load(
                 r#"
             local f = function(name, line, wildcards) Send(wildcards[1]) end
@@ -655,7 +689,9 @@ mod tests {
             .exec()
             .unwrap();
         engine.apply();
-        engine.push(EngineAction::ProcessWorldLines(vec![RawLine::new("张三走了过来。\r\n")]));
+        engine.push(EngineAction::ProcessWorldLines(vec![RawLine::new(
+            "张三走了过来。\r\n",
+        )]));
         let mut evts = engine.apply();
         assert_eq!(2, evts.len());
         let mut rawlines = RawLines::unbounded();
@@ -666,7 +702,10 @@ mod tests {
             Style::default(),
         )]));
         assert_eq!(RuntimeOutput::ToUI(rawlines, lines), evts.remove(0));
-        assert_eq!(RuntimeOutput::ToServer("张三\n".as_bytes().to_vec()), evts.remove(0));
+        assert_eq!(
+            RuntimeOutput::ToServer("张三\n".as_bytes().to_vec()),
+            evts.remove(0)
+        );
     }
 
     #[test]
@@ -679,7 +718,9 @@ mod tests {
             CreateTrigger("trigger-oneshot", "trg", "^(.*)走了过来。$", trigger_flag.Enabled + trigger_flag.OneShot, 1, oneshot)
         "#).exec().unwrap();
         engine.apply();
-        engine.push(EngineAction::ProcessWorldLines(vec![RawLine::new("张三走了过来。\r\n")]));
+        engine.push(EngineAction::ProcessWorldLines(vec![RawLine::new(
+            "张三走了过来。\r\n",
+        )]));
         let mut evts = engine.apply();
         let mut rawlines = RawLines::unbounded();
         rawlines.push_line(RawLine::new("张三走了过来。\r\n"));
@@ -689,7 +730,10 @@ mod tests {
             Style::default(),
         )]));
         assert_eq!(RuntimeOutput::ToUI(rawlines, lines), evts.remove(0));
-        assert_eq!(RuntimeOutput::ToServer("张三\n".as_bytes().to_vec()), evts.remove(0));
+        assert_eq!(
+            RuntimeOutput::ToServer("张三\n".as_bytes().to_vec()),
+            evts.remove(0)
+        );
         assert_eq!(0, engine.triggers.len());
     }
 
@@ -699,4 +743,3 @@ mod tests {
         Ok(engine)
     }
 }
-

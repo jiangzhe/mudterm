@@ -1,15 +1,15 @@
-use mlua::Lua;
-use crate::runtime::vars::Variables;
-use crate::runtime::queue::ActionQueue;
-use crate::runtime::engine;
-use crate::runtime::engine::EngineAction;
-use crate::runtime::alias::{AliasModel, AliasFlags};
-use crate::runtime::trigger::{TriggerModel, TriggerFlags, TriggerExtra};
-use crate::ui::line::Line;
-use crate::ui::style::{Style, Color};
-use crate::ui::UserOutput;
 use crate::codec::Codec;
 use crate::error::{Error, Result};
+use crate::runtime::alias::{AliasFlags, AliasModel};
+use crate::runtime::engine;
+use crate::runtime::engine::EngineAction;
+use crate::runtime::queue::ActionQueue;
+use crate::runtime::trigger::{TriggerExtra, TriggerFlags, TriggerModel};
+use crate::runtime::vars::Variables;
+use crate::ui::line::Line;
+use crate::ui::style::{Color, Style};
+use crate::ui::UserOutput;
+use mlua::Lua;
 use uuid::Uuid;
 
 /// 初始化运行时
@@ -23,12 +23,11 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
 
     // 初始化SetVariable函数
     let vars = vtl.clone();
-    let set_variable = lua
-        .create_function(move |_, (k, v): (String, String)| {
-            log::trace!("SetVariable function called");
-            vars.insert(k, v);
-            Ok(())
-        })?;
+    let set_variable = lua.create_function(move |_, (k, v): (String, String)| {
+        log::trace!("SetVariable function called");
+        vars.insert(k, v);
+        Ok(())
+    })?;
     globals.set("SetVariable", set_variable)?;
 
     // 初始化GetVariable函数
@@ -82,16 +81,17 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
 
     // 初始化ColourNote函数
     let queue = tmpq.clone();
-    let colour_note =
-        lua
-            .create_function(move |_, (fg, bg, text): (String, String, String)| {
-                log::trace!("ColourNote function called");
-                let style = Style::default()
-                    .fg(Color::from_str_or_default(fg, Color::Reset))
-                    .bg(Color::from_str_or_default(bg, Color::Reset));
-                queue.push(EngineAction::SendLineToUI(Line::fmt_with_style(text, style), None));
-                Ok(())
-            })?;
+    let colour_note = lua.create_function(move |_, (fg, bg, text): (String, String, String)| {
+        log::trace!("ColourNote function called");
+        let style = Style::default()
+            .fg(Color::from_str_or_default(fg, Color::Reset))
+            .bg(Color::from_str_or_default(bg, Color::Reset));
+        queue.push(EngineAction::SendLineToUI(
+            Line::fmt_with_style(text, style),
+            None,
+        ));
+        Ok(())
+    })?;
     globals.set("ColourNote", colour_note)?;
 
     // 初始化GetUniqueID函数
@@ -109,8 +109,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
 
     // 别名回调注册表
     let alias_callbacks = lua.create_table()?;
-    lua
-        .globals()
+    lua.globals()
         .set(engine::GLOBAL_ALIAS_CALLBACKS, alias_callbacks)?;
 
     // 初始化CreateAlias函数
@@ -156,9 +155,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
             // 2. 需保证在下次检验名称时若重名则失败
             // 重要：在处理RuntimAction时，需清理曾添加的回调函数
             alias_callbacks.set(alias.model.name.to_owned(), func)?;
-            queue.push(EngineAction::CreateAlias(
-                alias,
-            ));
+            queue.push(EngineAction::CreateAlias(alias));
             Ok(())
         },
     )?;
@@ -168,9 +165,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
     let queue = tmpq.clone();
     let delete_alias = lua.create_function(move |_, name: String| {
         log::trace!("DeleteAlias function called");
-        queue.push(EngineAction::DeleteAlias(
-            name,
-        ));
+        queue.push(EngineAction::DeleteAlias(name));
         Ok(())
     })?;
     globals.set("DeleteAlias", delete_alias)?;
@@ -184,8 +179,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
 
     // 触发器回调注册表
     let trigger_callbacks = lua.create_table()?;
-    lua
-        .globals()
+    lua.globals()
         .set(engine::GLOBAL_TRIGGER_CALLBACKS, trigger_callbacks)?;
 
     // 初始化CreateTrigger函数
@@ -213,7 +207,8 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
                 )))
             })?;
 
-            let trigger_callbacks: mlua::Table = lua.globals().get(engine::GLOBAL_TRIGGER_CALLBACKS)?;
+            let trigger_callbacks: mlua::Table =
+                lua.globals().get(engine::GLOBAL_TRIGGER_CALLBACKS)?;
             if trigger_callbacks.contains_key(name.to_owned())? {
                 return Err(mlua::Error::external(Error::RuntimeError(format!(
                     "trigger callback '{}' already exists",
@@ -252,7 +247,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         Ok(())
     })?;
     globals.set("EnableTriggerGroup", enable_trigger_group)?;
-    
+
     // 初始化LoadFile函数
     let queue = tmpq.clone();
     let load_file = lua.create_function(move |_, path: String| {

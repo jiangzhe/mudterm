@@ -1,7 +1,7 @@
-use crate::runtime::RuntimeOutput;
-use crate::runtime::engine::EngineAction;
-use crate::ui::line::{Line, Lines, RawLine, RawLines};
 use crate::codec::Encoder;
+use crate::runtime::engine::EngineAction;
+use crate::runtime::RuntimeOutput;
+use crate::ui::line::{Line, Lines, RawLine, RawLines};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -30,10 +30,7 @@ impl OutputQueue {
         }
         let mut raw_lines = RawLines::unbounded();
         raw_lines.push_line(raw);
-        self.0.push(RuntimeOutput::ToUI(
-            raw_lines,
-            Lines::new(),
-        ));
+        self.0.push(RuntimeOutput::ToUI(raw_lines, Lines::new()));
     }
 
     pub fn send_styled_line(&mut self, styled: Line) {
@@ -43,10 +40,8 @@ impl OutputQueue {
         }
         let mut styled_lines = Lines::new();
         styled_lines.push_line(styled);
-        self.0.push(RuntimeOutput::ToUI(
-            RawLines::unbounded(),
-            styled_lines,
-        ));
+        self.0
+            .push(RuntimeOutput::ToUI(RawLines::unbounded(), styled_lines));
     }
 
     /// 推送命令必须以\n结尾

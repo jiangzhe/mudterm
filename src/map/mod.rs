@@ -165,17 +165,3 @@ struct RoomWithDepth {
     id: u32,
     depth: u32,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_planner_real_walk() {
-        let mapper = Mapper::load_from_file("data/pkuxkx-utf8.db").unwrap();
-        let planner = mapper.planner();
-        let mut plan = planner.walk(1, 500);
-        plan.reverse();
-        println!("{:#?}", plan);
-    }
-}

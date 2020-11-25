@@ -1,7 +1,7 @@
-use std::time::{Duration, Instant};
+use crate::runtime::delay_queue::{Delay, DelayQueue, Delayed};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
-use crate::runtime::delay_queue::{DelayQueue, Delay};
 
 #[derive(Debug)]
 pub struct Timers {
@@ -10,9 +10,8 @@ pub struct Timers {
 }
 
 impl Timers {
-
     pub fn new() -> Self {
-        Self{
+        Self {
             schedule: DelayQueue::new(),
             models: HashMap::new(),
         }
@@ -23,6 +22,14 @@ impl Timers {
         self.schedule.clone()
     }
 
+    pub fn get(&self, name: impl AsRef<str>) -> Option<&TimerModel> {
+        self.models.get(name.as_ref())
+    }
+
+    pub fn len(&self) -> usize {
+        self.models.len()
+    }
+
     pub fn insert(&mut self, tm: TimerModel) {
         if !tm.enabled {
             // 仅插入而不启动
@@ -30,9 +37,16 @@ impl Timers {
             return;
         }
 
-        let (timer, tm) = tm.start();
+        let (timer, tm) = tm.start_now();
         self.schedule.push(timer);
         self.models.insert(tm.name.to_owned(), tm);
+    }
+
+    pub fn is_enabled(&self, name: &str) -> bool {
+        if let Some(tm) = self.models.get(name) {
+            return tm.enabled;
+        }
+        false
     }
 
     pub fn enable(&mut self, name: &str, enabled: bool) {
@@ -65,23 +79,28 @@ impl Timers {
         self.models.remove(name)
     }
 
-    /// 提取调度任务，若无满足条件者，将阻塞当前线程
-    pub fn pop_timeout(&mut self, duration: Duration) -> Option<Timer> {
-        let deadline = Instant::now() + duration;
-        while let Some(task) = self.schedule.pop_until(deadline) {
-            let timer = task.value;
-            // 检查状态
-            if let Some(tm) = self.models.get(&timer.name) {
-                if let Some(uuid) = tm.uuid {
-                    if timer.uuid == uuid && tm.enabled {
-                        // 只有在uuid相同且定时器被激活时，返回该
-                        // 定时任务，否则直接丢弃
-                        return Some(timer);
+    pub fn finish(&mut self, task: Delay<Timer>) {
+        if let Some(tm) = self.models.get(&task.value.name) {
+            if let Some(uuid) = tm.uuid {
+                if task.value.uuid == uuid {
+                    // uuid相同表明定时任务与调度器一致，可进行后续处理
+                    let (name, tm) = self.models.remove_entry(&task.value.name).unwrap();
+                    if tm.oneshot {
+                        // 临时任务，直接退出
+                        return;
                     }
+                    if !tm.enabled {
+                        // 处于禁用状态，插入并退出
+                        self.models.insert(name, tm);
+                        return;
+                    }
+                    // 处于启用状态，开启下一次调度
+                    let (next_timer, next_tm) = tm.start_at(task.delay_until());
+                    self.schedule.push(next_timer);
+                    self.models.insert(name, next_tm);
                 }
             }
         }
-        None
     }
 }
 
@@ -103,9 +122,14 @@ pub struct TimerModel {
 }
 
 impl TimerModel {
-
-    pub fn new(name: impl Into<String>, group: impl Into<String>, tick_time: Duration, enabled: bool, oneshot: bool) -> Self {
-        Self{
+    pub fn new(
+        name: impl Into<String>,
+        group: impl Into<String>,
+        tick_time: Duration,
+        enabled: bool,
+        oneshot: bool,
+    ) -> Self {
+        Self {
             name: name.into(),
             group: group.into(),
             tick_time,
@@ -115,12 +139,16 @@ impl TimerModel {
         }
     }
 
-    pub fn start(mut self) -> (Delay<Timer>, TimerModel) {
-        let next_time = Instant::now() + self.tick_time;
+    pub fn start_now(self) -> (Delay<Timer>, TimerModel) {
+        self.start_at(Instant::now())
+    }
+
+    pub fn start_at(mut self, start_time: Instant) -> (Delay<Timer>, TimerModel) {
+        let next_time = start_time + self.tick_time;
         // uuid将作为检验定时任务是否与当前定时器匹配的依据
         let uuid = Uuid::new_v4().as_u128();
         self.uuid.replace(uuid);
-        let timer = Timer{
+        let timer = Timer {
             name: self.name.to_owned(),
             uuid,
             tick_time: self.tick_time,
@@ -134,11 +162,92 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_instant_timer() {
-        let inst = Instant::now() + Duration::from_secs(3);
-        println!("{:?}", inst.checked_duration_since(Instant::now()));
-        // std::thread::sleep(Duration::from_secs(1));
-        // println!("{:?}", inst.saturating_duration_since(Instant::now())); 
-        // println!("{:?}", Duration::from_secs(3) - Duration::from_secs(5));
+    fn test_timer_timout() {
+        let mut timers = Timers::new();
+        let schedule = timers.schedule();
+        timers.insert(TimerModel::new(
+            "t1",
+            "timer",
+            Duration::from_millis(100),
+            true,
+            false,
+        ));
+        assert!(schedule.pop_timeout(Duration::from_millis(50)).is_none());
+        assert_eq!(
+            "t1",
+            &schedule
+                .pop_timeout(Duration::from_millis(51))
+                .unwrap()
+                .value
+                .name
+        );
+        assert!(timers.get("t1").is_some());
+    }
+
+    #[test]
+    fn test_timer_oneshot() {
+        let mut timers = Timers::new();
+        let schedule = timers.schedule();
+        timers.insert(TimerModel::new(
+            "t2",
+            "timer",
+            Duration::from_millis(50),
+            true,
+            true,
+        ));
+        let task = schedule.pop();
+        timers.finish(task);
+        assert_eq!(0, timers.len());
+    }
+
+    #[test]
+    fn test_timer_repeat() {
+        let mut timers = Timers::new();
+        let schedule = timers.schedule();
+        timers.insert(TimerModel::new(
+            "t3",
+            "timer",
+            Duration::from_millis(10),
+            true,
+            false,
+        ));
+        for _ in 0..10 {
+            let task = schedule.pop_timeout(Duration::from_millis(11)).unwrap();
+            timers.finish(task);
+        }
+    }
+
+    #[test]
+    fn test_timer_enable() {
+        let mut timers = Timers::new();
+        let schedule = timers.schedule();
+        timers.insert(TimerModel::new(
+            "t4",
+            "timer",
+            Duration::from_millis(10),
+            false,
+            false,
+        ));
+        assert!(schedule.pop_timeout(Duration::from_millis(11)).is_none());
+        timers.enable("t4", true);
+        assert!(schedule.pop_timeout(Duration::from_millis(11)).is_some());
+    }
+
+    #[test]
+    fn test_timer_disable() {
+        let mut timers = Timers::new();
+        let schedule = timers.schedule();
+        timers.insert(TimerModel::new(
+            "t5",
+            "timer",
+            Duration::from_millis(10),
+            true,
+            false,
+        ));
+        timers.enable("t5", false);
+        let task = schedule.pop_timeout(Duration::from_millis(11)).unwrap();
+        assert!(!timers.is_enabled(&task.value.name));
+        timers.finish(task);
+        assert!(schedule.pop_timeout(Duration::from_millis(11)).is_none());
     }
 }

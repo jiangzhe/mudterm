@@ -4,8 +4,8 @@ use crate::event::{Event, EventHandler, NextStep, QuitHandler};
 use crate::protocol::Packet;
 use crate::runtime::{Engine, EngineAction, RuntimeOutput, RuntimeOutputHandler};
 use crate::signal;
-use crate::ui::{Screen, UIEvent};
 use crate::ui::line::Lines;
+use crate::ui::{Screen, UIEvent};
 use crate::userinput;
 use crossbeam_channel::{unbounded, Sender};
 use std::{io, thread};
@@ -174,7 +174,8 @@ impl RuntimeOutputHandler for Client {
     fn on_runtime_output(&mut self, output: RuntimeOutput) -> Result<NextStep> {
         match output {
             RuntimeOutput::ToServer(bs) => {
-                self.srvtx.send(Packet::Text(String::from_utf8(bs).unwrap()))?;
+                self.srvtx
+                    .send(Packet::Text(String::from_utf8(bs).unwrap()))?;
             }
             RuntimeOutput::ToUI(_, styled) => {
                 self.uitx.send(UIEvent::Lines(styled))?;
