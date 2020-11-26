@@ -1,6 +1,7 @@
 use crate::codec::{Codec, MudCodec};
 use crate::conf;
 use crate::error::{Error, Result};
+use crate::event::Event;
 use crate::runtime::alias::Alias;
 use crate::runtime::alias::Aliases;
 use crate::runtime::cache::{CacheText, InlineStyle};
@@ -11,12 +12,16 @@ use crate::runtime::trigger::Trigger;
 use crate::runtime::trigger::Triggers;
 use crate::runtime::vars::Variables;
 use crate::runtime::RuntimeOutput;
+use crate::runtime::delay_queue::{Delay, Delayed};
+use crate::runtime::timer::{Timers, Timer, TimerModel};
 use crate::ui::ansi::AnsiParser;
 use crate::ui::line::{Line, Lines, RawLine};
 use crate::ui::UserOutput;
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::thread::{self, JoinHandle};
+use crossbeam_channel::Sender;
 
 // 别名回调存储于Lua脚本引擎的全局变量表中
 pub(crate) const GLOBAL_ALIAS_CALLBACKS: &str = "_global_alias_callbacks";
@@ -35,6 +40,10 @@ pub enum EngineAction {
     CreateTrigger(Trigger),
     DeleteTrigger(String),
     EnableTriggerGroup(String, bool),
+    CreateTimer(TimerModel),
+    DeleteTimer(String),
+    ExecuteTimer(Delay<Timer>),
+    EnableTimerGroup(String, bool),
     LoadFile(String),
     // ExecuteUserCmd(String),
     // ExecuteUserScript(String),
@@ -58,6 +67,7 @@ pub struct Engine {
     cache: CacheText,
     aliases: Aliases,
     triggers: Triggers,
+    timers: Timers,
     cmd_delim: char,
     send_empty_cmd: bool,
     logger: Option<File>,
@@ -77,6 +87,7 @@ impl Engine {
             cache: CacheText::new(5, 10),
             aliases: Aliases::new(),
             triggers: Triggers::new(),
+            timers: Timers::new(),
             cmd_delim: config.term.cmd_delim,
             send_empty_cmd: config.term.send_empty_cmd,
             logger: None,
@@ -90,6 +101,19 @@ impl Engine {
     pub fn init(&mut self) -> Result<()> {
         init_lua(&self.lua, &self.vars, &self.tmpq)?;
         Ok(())
+    }
+
+    pub fn spawn_timer(&self, evttx: Sender<Event>) -> JoinHandle<()> {
+        let schedule = self.timers.schedule();
+        thread::spawn(move || {
+            loop {
+                let timer = schedule.pop();
+                if let Err(e) = evttx.send(Event::Timer(timer)) {
+                    log::warn!("channel send timer error {}", e);
+                    break;
+                }
+            }
+        })
     }
 
     /// 推送操作
@@ -132,8 +156,8 @@ impl Engine {
                     log::warn!("delete alias error {}", e);
                 }
             }
-            EngineAction::EnableAliasGroup(name, enabled) => {
-                if let Err(e) = self.enable_alias_group(&name, enabled) {
+            EngineAction::EnableAliasGroup(group, enabled) => {
+                if let Err(e) = self.enable_alias_group(&group, enabled) {
                     log::warn!("enable alias group error {}", e);
                 }
             }
@@ -155,9 +179,42 @@ impl Engine {
                     log::warn!("delete trigger error {}", e);
                 }
             }
-            EngineAction::EnableTriggerGroup(name, enabled) => {
-                if let Err(e) = self.enable_trigger_group(&name, enabled) {
+            EngineAction::EnableTriggerGroup(group, enabled) => {
+                if let Err(e) = self.enable_trigger_group(&group, enabled) {
                     log::warn!("enable trigger group error {}", e);
+                }
+            }
+            EngineAction::CreateTimer(tm) => {
+                self.create_timer(tm);
+            }
+            EngineAction::DeleteTimer(name) => {
+                if let Err(e) = self.delete_timer(&name) {
+                    log::warn!("delete timer error {}", e);
+                }
+            }
+            EngineAction::EnableTimerGroup(group, enabled) => {
+                if let Err(e) = self.enable_timer_group(&group, enabled) {
+                    log::warn!("enable timer group error {}", e);
+                }
+            }
+            EngineAction::ExecuteTimer(task) => {
+                match self.timers.remove(&task.value.name) {
+                    // 无法匹配，不做操作
+                    None => (),
+                    Some(tm) => {
+                        if let Some(uuid) = tm.uuid() {
+                            if uuid == task.value.uuid && tm.enabled() {
+                                // 仅当uuid匹配且调度器开启时，执行
+                                if let Err(e) = self.exec_timer(&task.value.name) {
+                                    log::warn!("execute timer error {}", e);
+                                }
+                                // 若非临时，需要将定时器重新调度
+                                if !tm.oneshot() {
+                                    self.timers.insert_at(tm, task.delay_until());
+                                }
+                            }
+                        }
+                    }
                 }
             }
             EngineAction::LoadFile(path) => {
@@ -238,9 +295,9 @@ impl Engine {
     }
 
     /// 启用/禁用别名组
-    fn enable_alias_group(&mut self, name: &str, enabled: bool) -> Result<()> {
-        log::debug!("Enabling alias group {}, enabled={}", name, enabled);
-        let n = self.aliases.enable_group(name, enabled);
+    fn enable_alias_group(&mut self, group: &str, enabled: bool) -> Result<()> {
+        log::debug!("Enabling alias group {}, enabled={}", group, enabled);
+        let n = self.aliases.enable_group(group, enabled);
         log::trace!("{} aliases effected", n);
         Ok(())
     }
@@ -284,10 +341,49 @@ impl Engine {
     }
 
     // 启用/禁用触发器组
-    fn enable_trigger_group(&mut self, name: &str, enabled: bool) -> Result<()> {
-        log::debug!("Enabling trigger group {}, enabled={}", name, enabled);
-        let n = self.triggers.enable_group(name, enabled);
+    fn enable_trigger_group(&mut self, group: &str, enabled: bool) -> Result<()> {
+        log::debug!("Enabling trigger group {}, enabled={}", group, enabled);
+        let n = self.triggers.enable_group(group, enabled);
         log::trace!("{} triggers effected", n);
+        Ok(())
+    }
+
+    // 执行定时器
+    fn exec_timer(&mut self, name: &str) -> Result<()> {
+        log::debug!("Executing timer {}", name);
+        let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_TIMER_CALLBACKS)?;
+        let func: mlua::Function = callbacks.get(name)?;
+        func.call(())?;
+        Ok(())
+    }
+
+    // 创建定时器
+    fn create_timer(&mut self, tm: TimerModel) {
+        log::debug!("Creating timer {}", tm.name);
+        log::trace!("tick in millis is {}ms", tm.tick_time.as_millis());
+        self.timers.insert(tm);
+    }
+
+    // 删除定时器回调
+    fn delete_timer_callback(&mut self, name: &str) -> Result<()> {
+        let timer_callbacks: mlua::Table = self.lua.globals().get(GLOBAL_TIMER_CALLBACKS)?;
+        timer_callbacks.set(name, mlua::Value::Nil)?;
+        Ok(())
+    }
+
+    // 删除定时器
+    fn delete_timer(&mut self, name: &str) -> Result<()> {
+        log::debug!("Deleting timer {}", name);
+        self.delete_timer_callback(name)?;
+        self.timers.remove(name);
+        Ok(())
+    }
+
+    // 启用/禁用定时器组
+    fn enable_timer_group(&mut self, group: &str, enabled: bool) -> Result<()> {
+        log::debug!("Enabling timer group {}, enabled={}", group, enabled);
+        let n = self.timers.enable_group(group, enabled);
+        log::trace!("{} timers effected", n);
         Ok(())
     }
 

@@ -221,8 +221,8 @@ impl EventHandler for Server {
             Event::UserOutput(output) => {
                 engine.push(EngineAction::ExecuteUserOutput(output));
             }
-            Event::Tick => {
-                // todo: implements trigger by tick
+            Event::Timer(timer) => {
+                engine.push(EngineAction::ExecuteTimer(timer));
             }
             Event::WorldDisconnected => {
                 log::warn!("world down or disconnected, shutdown server");

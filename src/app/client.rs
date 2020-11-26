@@ -127,10 +127,6 @@ impl EventHandler for Client {
         match evt {
             Event::Quit => return Ok(NextStep::Quit),
             // 以下事件发送给UI线程处理
-            Event::Tick => {
-                // todo: implements trigger by tick
-                self.uitx.send(UIEvent::Tick)?;
-            }
             Event::TerminalKey(k) => {
                 self.uitx.send(UIEvent::Key(k))?;
             }
@@ -146,6 +142,9 @@ impl EventHandler for Client {
             }
             Event::UserOutput(output) => {
                 engine.push(EngineAction::ExecuteUserOutput(output));
+            }
+            Event::Timer(timer) => {
+                engine.push(EngineAction::ExecuteTimer(timer));
             }
             Event::ServerDown => {
                 log::error!("server down or not reachable");

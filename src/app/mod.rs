@@ -51,9 +51,13 @@ pub fn standalone(config: Config) -> Result<()> {
 
     // 6. start ui thread
     log::info!("starting thread handling user interface");
-    let (uitx, uihandle) = client::start_ui_handle(config.term, evttx)?;
+    let (uitx, uihandle) = client::start_ui_handle(config.term, evttx.clone())?;
 
-    // 7. run event loop on main thread
+    // 7. start timer thread
+    log::info!("starting thread handling timer");
+    let _ = engine.spawn_timer(evttx); 
+
+    // 8. run event loop on main thread
     let standalone_handler = Standalone::new(uitx, worldtx);
     let quit_handler = QuitStandalone::new(uihandle);
     let eventloop = EventLoop::new(engine, evtrx, standalone_handler, quit_handler);
@@ -100,9 +104,13 @@ pub fn client(config: Config) -> Result<()> {
 
     // 6. start ui thread
     log::info!("starting thread handling user interface");
-    let (uitx, uihandle) = client::start_ui_handle(config.term, evttx)?;
+    let (uitx, uihandle) = client::start_ui_handle(config.term, evttx.clone())?;
 
-    // 7. run event loop on main thread
+    // 7. start timer thread
+    log::info!("starting thread handling timer");
+    let _ = engine.spawn_timer(evttx); 
+
+    // 8. run event loop on main thread
     let client_handler = Client::new(uitx, srvtx);
     let quit_handler = QuitClient::new(uihandle);
     let eventloop = EventLoop::new(engine, evtrx, client_handler, quit_handler);
@@ -145,8 +153,12 @@ pub fn server(config: Config) -> Result<()> {
     log::info!("starting thread handling message from mud server");
     server::start_from_mud_handle(evttx.clone(), from_mud);
 
-    // 7. run event loop on main thread
-    let server_handler = Server::new(evttx.clone(), worldtx, pass, init_max_lines);
+    // 5. start timer thread
+    log::info!("starting thread handling timer");
+    let _ = engine.spawn_timer(evttx.clone()); 
+
+    // 6. run event loop on main thread
+    let server_handler = Server::new(evttx, worldtx, pass, init_max_lines);
     let eventloop = EventLoop::new(engine, evtrx, server_handler, QuitServer);
     eventloop.run()?;
 

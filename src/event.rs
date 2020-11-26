@@ -1,5 +1,7 @@
 use crate::error::Result;
 use crate::runtime::{Engine, RuntimeOutputHandler};
+use crate::runtime::timer::Timer;
+use crate::runtime::delay_queue::Delay;
 use crate::ui::line::RawLine;
 use crate::ui::UserOutput;
 use crossbeam_channel::Receiver;
@@ -23,8 +25,8 @@ pub enum Event {
     // UserScriptLine(String),
     /// window resize event
     WindowResize,
-    /// tick event
-    Tick,
+    /// timer event
+    Timer(Delay<Timer>),
     /// Quit
     Quit,
     /// raw bytes following telnet protocol, should

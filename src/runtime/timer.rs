@@ -2,6 +2,14 @@ use crate::runtime::delay_queue::{Delay, DelayQueue, Delayed};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
+use bitflags::bitflags;
+
+bitflags! {
+    pub struct TimerFlags: u16 {
+        const ENABLED = 0x0001;
+        const ONESHOT = 0x0004;
+    }
+}
 
 #[derive(Debug)]
 pub struct Timers {
@@ -31,47 +39,69 @@ impl Timers {
     }
 
     pub fn insert(&mut self, tm: TimerModel) {
-        if !tm.enabled {
+        if !tm.enabled() {
             // 仅插入而不启动
             self.models.insert(tm.name.to_owned(), tm);
             return;
         }
+        self.insert_at(tm, Instant::now());
+    }
 
-        let (timer, tm) = tm.start_now();
+    pub fn insert_at(&mut self, tm: TimerModel, start_time: Instant) {
+        debug_assert!(tm.enabled());
+        let (timer, tm) = tm.start_at(start_time);
         self.schedule.push(timer);
         self.models.insert(tm.name.to_owned(), tm);
     }
 
     pub fn is_enabled(&self, name: &str) -> bool {
         if let Some(tm) = self.models.get(name) {
-            return tm.enabled;
+            return tm.enabled();
         }
         false
     }
 
     pub fn enable(&mut self, name: &str, enabled: bool) {
         if let Some(tm) = self.models.get(name) {
-            if tm.enabled == enabled {
+            if tm.enabled() == enabled {
                 // 无需任何操作
                 return;
             }
-            if tm.enabled && !enabled {
+            if tm.enabled() && !enabled {
                 // 关闭已启动的定时器
                 let tm = self.models.get_mut(name).unwrap();
-                tm.enabled = false;
+                tm.set_enabled(false);
                 tm.uuid.take();
                 return;
             }
-            if !tm.enabled && enabled {
+            if !tm.enabled() && enabled {
                 // 开启定时器
                 let mut tm = self.models.remove(name).unwrap();
-                tm.enabled = true;
+                tm.set_enabled(true);
                 tm.uuid.take();
                 self.insert(tm);
                 return;
             }
         }
         // 查询不到，无需任何操作
+    }
+
+    pub fn enable_group(&mut self, group: &str, enabled: bool) -> usize {
+        let mut n = 0;
+        for tm in self.models.values_mut() {
+            if tm.group == group {
+                if !tm.enabled() && enabled {
+                    // 从禁用变为启用，生成调度
+                    tm.set_enabled(true);
+                    let (new_timer, new_tm) = tm.clone().start_now();
+                    self.schedule.push(new_timer);
+                    *tm = new_tm;
+                } else {
+                    tm.set_enabled(enabled);
+                }
+            }
+        }
+        n
     }
 
     pub fn remove(&mut self, name: &str) -> Option<TimerModel> {
@@ -85,11 +115,11 @@ impl Timers {
                 if task.value.uuid == uuid {
                     // uuid相同表明定时任务与调度器一致，可进行后续处理
                     let (name, tm) = self.models.remove_entry(&task.value.name).unwrap();
-                    if tm.oneshot {
+                    if tm.oneshot() {
                         // 临时任务，直接退出
                         return;
                     }
-                    if !tm.enabled {
+                    if !tm.enabled() {
                         // 处于禁用状态，插入并退出
                         self.models.insert(name, tm);
                         return;
@@ -111,13 +141,12 @@ pub struct Timer {
     tick_time: Duration,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TimerModel {
     pub name: String,
     pub group: String,
     pub tick_time: Duration,
-    pub enabled: bool,
-    pub oneshot: bool,
+    flags: TimerFlags,
     uuid: Option<u128>,
 }
 
@@ -126,17 +155,43 @@ impl TimerModel {
         name: impl Into<String>,
         group: impl Into<String>,
         tick_time: Duration,
-        enabled: bool,
-        oneshot: bool,
+        flags: TimerFlags,
     ) -> Self {
         Self {
             name: name.into(),
             group: group.into(),
             tick_time,
-            enabled,
-            oneshot,
+            flags,
             uuid: None,
         }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.flags.contains(TimerFlags::ENABLED)
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        if enabled {
+            self.flags.insert(TimerFlags::ENABLED);
+        } else {
+            self.flags.remove(TimerFlags::ENABLED);
+        }
+    }
+
+    pub fn oneshot(&self) -> bool {
+        self.flags.contains(TimerFlags::ONESHOT)
+    }
+
+    pub fn set_oneshot(&mut self, oneshot: bool) {
+        if oneshot {
+            self.flags.insert(TimerFlags::ONESHOT);
+        } else {
+            self.flags.remove(TimerFlags::ONESHOT);
+        }
+    } 
+
+    pub fn uuid(&self) -> Option<u128> {
+        self.uuid
     }
 
     pub fn start_now(self) -> (Delay<Timer>, TimerModel) {
@@ -169,8 +224,7 @@ mod tests {
             "t1",
             "timer",
             Duration::from_millis(100),
-            true,
-            false,
+            TimerFlags::ENABLED,
         ));
         assert!(schedule.pop_timeout(Duration::from_millis(50)).is_none());
         assert_eq!(
@@ -192,8 +246,7 @@ mod tests {
             "t2",
             "timer",
             Duration::from_millis(50),
-            true,
-            true,
+            TimerFlags::ENABLED | TimerFlags::ONESHOT,
         ));
         let task = schedule.pop();
         timers.finish(task);
@@ -208,8 +261,7 @@ mod tests {
             "t3",
             "timer",
             Duration::from_millis(10),
-            true,
-            false,
+            TimerFlags::ENABLED,
         ));
         for _ in 0..10 {
             let task = schedule.pop_timeout(Duration::from_millis(11)).unwrap();
@@ -225,8 +277,7 @@ mod tests {
             "t4",
             "timer",
             Duration::from_millis(10),
-            false,
-            false,
+            TimerFlags::empty(),
         ));
         assert!(schedule.pop_timeout(Duration::from_millis(11)).is_none());
         timers.enable("t4", true);
@@ -241,8 +292,7 @@ mod tests {
             "t5",
             "timer",
             Duration::from_millis(10),
-            true,
-            false,
+            TimerFlags::ENABLED,
         ));
         timers.enable("t5", false);
         let task = schedule.pop_timeout(Duration::from_millis(11)).unwrap();

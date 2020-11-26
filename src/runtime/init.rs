@@ -5,10 +5,12 @@ use crate::runtime::engine;
 use crate::runtime::engine::EngineAction;
 use crate::runtime::queue::ActionQueue;
 use crate::runtime::trigger::{TriggerExtra, TriggerFlags, TriggerModel};
+use crate::runtime::timer::{Timers, TimerModel, TimerFlags};
 use crate::runtime::vars::Variables;
 use crate::ui::line::Line;
 use crate::ui::style::{Color, Style};
 use crate::ui::UserOutput;
+use std::time::Duration;
 use mlua::Lua;
 use uuid::Uuid;
 
@@ -247,6 +249,73 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         Ok(())
     })?;
     globals.set("EnableTriggerGroup", enable_trigger_group)?;
+
+    // 定时器常量
+    let timer_flag: mlua::Table = lua.create_table()?;
+    timer_flag.set("Enabled", 1)?;
+    timer_flag.set("OneShot", 4)?;
+    globals.set("timer_flag", timer_flag)?;
+
+    // 定时器回调注册表
+    let timer_callbacks = lua.create_table()?;
+    lua.globals()
+        .set(engine::GLOBAL_TIMER_CALLBACKS, timer_callbacks)?;
+
+    // 初始化CreateTimer函数
+    let queue = tmpq.clone();
+    let create_timer = lua.create_function(
+        move |lua, (name, group, tick_in_millis, flags, func): (String, String, u64, u16, mlua::Function)| {
+            log::trace!("CreateTimer function called");
+            let timer_callbacks: mlua::Table = 
+                lua.globals().get(engine::GLOBAL_TIMER_CALLBACKS)?;
+            let tick_time = Duration::from_millis(tick_in_millis);
+            let flags = TimerFlags::from_bits(flags).ok_or_else(|| {
+                mlua::Error::external(Error::RuntimeError(format!(
+                    "invalid timer flags {}",
+                    flags
+                )))})?;
+            let tm = TimerModel::new(name, group, tick_time, flags);
+            // 同alias
+            timer_callbacks.set(tm.name.to_owned(), func)?;
+            queue.push(EngineAction::CreateTimer(tm));
+            Ok(())
+    })?;
+    globals.set("CreateTimer", create_timer)?;
+
+    // 初始化DeleteTimer函数
+    let queue = tmpq.clone();
+    let delete_timer = lua.create_function(
+        move |_, name: String| {
+            log::trace!("DeleteTimer function called");
+            queue.push(EngineAction::DeleteTimer(name));
+            Ok(())
+    })?;
+    globals.set("DeleteTimer", delete_timer)?;
+
+    // 初始化EnableTimerGroup函数
+    let queue = tmpq.clone();
+    let enable_timer_group = lua.create_function(move |_, (name, enabled): (String, bool)| {
+        log::trace!("EnableTimerGroup function called");
+        queue.push(EngineAction::EnableTimerGroup(name, enabled));
+        Ok(())
+    })?;
+    globals.set("EnableTimerGroup", enable_timer_group)?;
+
+    // 初始化DoAfter函数
+    let queue = tmpq.clone();
+    let do_after = lua.create_function(move |lua, (tick_in_millis, func): (u64, mlua::Function)| {
+        log::trace!("DoAfter function called");
+        let timer_callbacks: mlua::Table = 
+                lua.globals().get(engine::GLOBAL_TIMER_CALLBACKS)?;
+        let tick_time = Duration::from_millis(tick_in_millis);
+        let flags = TimerFlags::ENABLED | TimerFlags::ONESHOT;
+        let name = Uuid::new_v4().to_simple().to_string();
+        let tm = TimerModel::new(name, "TemporaryDoAfter", tick_time, flags);
+        timer_callbacks.set(tm.name.to_owned(), func)?;
+        queue.push(EngineAction::CreateTimer(tm));
+        Ok(())
+    })?;
+    globals.set("DoAfter", do_after)?;
 
     // 初始化LoadFile函数
     let queue = tmpq.clone();

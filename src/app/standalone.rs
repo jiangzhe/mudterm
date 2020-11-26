@@ -28,10 +28,6 @@ impl EventHandler for Standalone {
                 self.worldtx.send(bs)?;
             }
             // 以下事件发送给UI线程处理
-            Event::Tick => {
-                // todo: implements trigger by tick
-                self.uitx.send(UIEvent::Tick)?;
-            }
             Event::TerminalKey(k) => {
                 self.uitx.send(UIEvent::Key(k))?;
             }
@@ -55,6 +51,9 @@ impl EventHandler for Standalone {
                 for err_line in err_lines.into_vec() {
                     engine.push(EngineAction::SendLineToUI(err_line, None));
                 }
+            }
+            Event::Timer(task) => {
+                engine.push(EngineAction::ExecuteTimer(task));
             }
             // standalone模式不支持客户端连接，待增强
             Event::NewClient(..)
