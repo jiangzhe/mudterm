@@ -211,6 +211,8 @@ impl Engine {
                                 // 若非临时，需要将定时器重新调度
                                 if !tm.oneshot() {
                                     self.timers.insert_at(tm, task.delay_until());
+                                } else {
+                                    log::debug!("Removing oneshot timer {}", tm.name);
                                 }
                             }
                         }

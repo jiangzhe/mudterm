@@ -104,9 +104,10 @@ function world.create_alias(args)
     create_alias(args)
 end
 
--- 删除触发器
+-- 删除别名
 -- 参数name: 名称，不可为空
 function world.delete_alias(name)
+    assert(name, "name of alias cannot be empty")
     DeleteAlias(name)
 end
 
@@ -126,8 +127,6 @@ local wrap_timer_callback = function(func)
 end
 
 local create_timer = function(args)
-    assert(type(args.tick_in_millis), "tick_time of timer must be number")
-    assert(args.tick_in_millis >= 100, "tick time of timer must be no less than 100ms")
     assert(type(args.func) == "function", "func of alias must be a function")
     assert(type(args.flags) == "number", "flags of alias must be number")
     if not args.name then
@@ -138,4 +137,81 @@ local create_timer = function(args)
     end
     local callback = wrap_timer_callback(args.func)
     CreateTimer(args.name, args.group, args.tick_in_millis, args.flags, callback)
+end
+
+-- 创建定时器
+-- 参数：
+-- name：名称，不传值则自动生成唯一id
+-- group：组名，默认为"default"
+-- tick_time：周期时间，单位为秒
+-- func：匹配成功的回调函数，不可为空，函数内部可使用协程相关指令，
+--       即，该函数传入后将包装为协程进行调用。
+--       该函数接受4个参数，按顺序为：
+--       1) name，该触发器名称。
+--       2) line，文本，若多行匹配，则为多行文本，以\r\n分隔。
+--       3) wildcards，正则捕获序列，实现为lua table，可使用数字
+--          或字符串下标进行取值。
+function world.create_timer(args)
+    assert(type(args.tick_time) == "number", "tick time of timer must be number")
+    args.tick_in_millis = args.tick_time * 1000
+    args.flags = timer_flag.Enabled
+    create_timer(args)
+end
+
+function world.create_oneshot_timer(args)
+    assert(type(args.tick_time) == "number", "tick time of timer must be number")
+    args.tick_in_millis = args.tick_time * 1000
+    args.flags = timer_flag.Enabled + timer_flag.OneShot
+    create_timer(args)
+end
+
+-- 删除定时器
+-- 参数name: 名称，不可为空
+function world.delete_timer(name)
+    assert(name, "name of timer cannot be empty")
+    DeleteTimer(name)
+end
+
+-- 开启/禁用定时器组
+-- 参数：
+-- 1. name，组名，不可为空
+-- 2. enabled，true开启/false禁用，默认为true
+function world.enable_timer_group(group, enabled)
+    enabled = enabled or true
+    EnableTimerGroup(group, enabled)
+end
+
+-- 该方法调用必须在协程中
+function world.wait_time(timeout)
+    assert(type(timeout) == "number", "timeout should be number")
+    local thread = assert(coroutine.running(), "wait_time must be called in coroutine")
+    local func = function()
+        local ok, err = coroutine.resume(thread)
+        if not ok then
+            error(err)
+        end
+    end
+    world.create_oneshot_timer{
+        group="WaitTime",
+        tick_time=timeout,
+        func=func
+    }
+    return coroutine.yield()
+end
+
+function world.wait_regexp(pattern)
+    assert(type(pattern) == "string", "pattern should be string")
+    local thread = assert(coroutine.running(), "wait_regexp must be called in coroutine")
+    local func = function()
+        local ok, err = coroutine.resume(thread)
+        if not ok then
+            error(err)
+        end
+    end
+    world.create_oneshot_trigger{
+        group="WaitRegexp",
+        pattern=pattern,
+        func=func
+    }
+    return coroutine.yield()
 end
