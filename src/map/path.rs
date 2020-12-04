@@ -1,5 +1,7 @@
-use crate::map::{Edge, FromRow};
+use crate::map::edge::Edge;
 use rusqlite::{Result, Row};
+use mlua::{Lua, ToLua, Value};
+use mlua::Result as LuaResult;
 
 #[derive(Debug, Clone)]
 pub struct Path {
@@ -42,8 +44,8 @@ impl Edge for Path {
     }
 }
 
-impl FromRow for Path {
-    fn from_row(row: &Row) -> Result<Self> {
+impl Path {
+    pub(crate) fn from_row(row: &Row) -> Result<Self> {
         Ok(Self {
             startid: row.get(0)?,
             endid: row.get(1)?,
@@ -55,6 +57,28 @@ impl FromRow for Path {
             mapchange: row.get(7)?,
             blockers: row.get(8)?,
         })
+    }
+}
+
+impl<'lua> ToLua<'lua> for Path {
+    fn to_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+        ToLua::to_lua(&self, lua)
+    }
+}
+
+impl<'lua> ToLua<'lua> for &Path {
+    fn to_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+        let table = lua.create_table()?;
+        table.set("startid", self.startid)?;
+        table.set("endid", self.endid)?;
+        table.set("path", &self.path[..])?;
+        table.set("endcode", &self.endcode[..])?;
+        // table.set("weight", self.weight)?;
+        // table.set("enabled", self.enabled)?;
+        table.set("category", self.category.to_string())?;
+        table.set("mapchange", self.mapchange)?;
+        table.set("blockers", &self.blockers[..])?;
+        Ok(Value::Table(table))
     }
 }
 
@@ -99,5 +123,21 @@ impl<'a> From<&'a str> for PathCategory {
             "bus" => Self::Bus,
             _ => Self::Normal,
         }
+    }
+}
+
+impl ToString for PathCategory {
+    fn to_string(&self) -> String {
+        let s = match self {
+            Self::Normal => "normal",
+            Self::Multiple => "multiple",
+            Self::Busy => "busy",
+            Self::Boat => "boat",
+            Self::Pause => "pause",
+            Self::Block => "block",
+            Self::CheckBusy => "checkbusy",
+            Self::Bus => "bus",
+        };
+        s.to_owned()
     }
 }

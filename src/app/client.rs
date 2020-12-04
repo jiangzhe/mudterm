@@ -1,7 +1,7 @@
 use crate::conf;
 use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
-use crate::protocol::Packet;
+use crate::protocol::cli::Packet;
 use crate::runtime::{Engine, EngineAction, RuntimeOutput, RuntimeOutputHandler};
 use crate::signal;
 use crate::ui::line::Lines;

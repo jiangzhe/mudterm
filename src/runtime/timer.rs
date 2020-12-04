@@ -90,6 +90,7 @@ impl Timers {
         let mut n = 0;
         for tm in self.models.values_mut() {
             if tm.group == group {
+                n += 1;
                 if !tm.enabled() && enabled {
                     // 从禁用变为启用，生成调度
                     tm.set_enabled(true);

@@ -1,14 +1,14 @@
 world = {}
 
-local wrap_trigger_callback = function(func)
+local wrap_trigger_callback = function(callback)
     return function(name, line, wildcards, styles)
-        return coroutine.wrap(func)(name, line, wildcards, styles)
+        return coroutine.wrap(callback)(name, line, wildcards, styles)
     end
 end
 
 local create_trigger = function(args)
     assert(args.pattern, "pattern of trigger cannot be empty")
-    assert(type(args.func) == "function", "func of trigger must be function")
+    assert(type(args.callback) == "function", "callback of trigger must be function")
     assert(type(args.flags) == "number", "flags of trigger must be number")
     if not args.name then
         args.name = "trigger-" .. GetUniqueID()
@@ -20,7 +20,7 @@ local create_trigger = function(args)
         args.match_lines = 1
     end
 
-    local callback = wrap_trigger_callback(args.func)
+    local callback = wrap_trigger_callback(args.callback)
     CreateTrigger(args.name, args.group, args.pattern, args.flags, args.match_lines, callback)
 end
 
@@ -67,15 +67,15 @@ function world.enable_trigger_group(group, enabled)
     EnableTriggerGroup(group, enabled)
 end
 
-local wrap_alias_callback = function(func)
+local wrap_alias_callback = function(callback)
     return function(name, line, wildcards)
-        return coroutine.wrap(func)(name, line, wildcards)
+        return coroutine.wrap(callback)(name, line, wildcards)
     end
 end
 
 local create_alias = function(args)
     assert(args.pattern, "pattern of alias cannot be empty")
-    assert(type(args.func) == "function", "func of alias must be function")
+    assert(type(args.callback) == "function", "callback of alias must be function")
     assert(type(args.flags) == "number", "flags of alias must be number")
     if not args.name then
         args.name = "alias-" .. GetUniqueID()
@@ -83,7 +83,7 @@ local create_alias = function(args)
     if not args.group then
         args.group = "default"
     end
-    local callback = wrap_alias_callback(args.func)
+    local callback = wrap_alias_callback(args.callback)
     CreateAlias(args.name, args.group, args.pattern, args.flags, callback)
 end
 
@@ -120,14 +120,14 @@ function world.enable_alias_group(group, enabled)
     EnableAliasGroup(group, enabled)
 end
 
-local wrap_timer_callback = function(func)
+local wrap_timer_callback = function(callback)
     return function()
-        return coroutine.wrap(func)()
+        return coroutine.wrap(callback)()
     end
 end
 
 local create_timer = function(args)
-    assert(type(args.func) == "function", "func of alias must be a function")
+    assert(type(args.callback) == "function", "callback of alias must be a function")
     assert(type(args.flags) == "number", "flags of alias must be number")
     if not args.name then
         args.name = "alias-" .. GetUniqueID()
@@ -135,7 +135,7 @@ local create_timer = function(args)
     if not args.group then
         args.group = "default"
     end
-    local callback = wrap_timer_callback(args.func)
+    local callback = wrap_timer_callback(args.callback)
     CreateTimer(args.name, args.group, args.tick_in_millis, args.flags, callback)
 end
 
@@ -181,37 +181,66 @@ function world.enable_timer_group(group, enabled)
     EnableTimerGroup(group, enabled)
 end
 
+-- 等待指定时间
 -- 该方法调用必须在协程中
 function world.wait_time(timeout)
     assert(type(timeout) == "number", "timeout should be number")
     local thread = assert(coroutine.running(), "wait_time must be called in coroutine")
-    local func = function()
-        local ok, err = coroutine.resume(thread)
-        if not ok then
-            error(err)
-        end
-    end
     world.create_oneshot_timer{
         group="WaitTime",
         tick_time=timeout,
-        func=func
+        callback=function()
+            local ok, err = coroutine.resume(thread)
+            if not ok then
+                error(err)
+            end
+        end
     }
     return coroutine.yield()
 end
 
-function world.wait_regexp(pattern)
+-- 等待某一行文本触发，超时时间可选
+-- 该方法调用必须在协程中
+-- 调用方可根据返回值个数判断是因为timeout还是因为触发而执行
+function world.wait_regexp(pattern, timeout)
     assert(type(pattern) == "string", "pattern should be string")
+    if timeout then
+        assert(type(timeout) == "number", "timeout must be number")
+    end
+    -- 创建临时定时器用于在timeout后删除触发
     local thread = assert(coroutine.running(), "wait_regexp must be called in coroutine")
-    local func = function()
-        local ok, err = coroutine.resume(thread)
-        if not ok then
-            error(err)
-        end
+    local trigger_name = "WaitRegexp-" .. GetUniqueID()
+    local timer_name
+    if timeout then
+        timer_name = "Timeout-" .. GetUniqueID()
+        world.create_oneshot_timer{
+            name=timer_name,
+            group="WaitRegexp",
+            tick_time=timeout,
+            callback=function()
+                -- timer执行时，将trigger删除
+                world.delete_trigger(trigger_name)
+                local ok, err = coroutine.resume(thread)
+                if not ok then
+                    error(err)
+                end
+            end 
+        } 
     end
     world.create_oneshot_trigger{
+        name=trigger_name,
         group="WaitRegexp",
         pattern=pattern,
-        func=func
+        callback=function(name, line, wildcards, styles)
+            -- trigger执行时，将timer删除
+            if timer_name then
+                world.delete_timer(timer_name)
+            end
+            local ok, err = coroutine.resume(thread, name, line, wildcards, styles)
+            if not ok then
+                error(err)
+            end
+        end
     }
     return coroutine.yield()
 end

@@ -1,5 +1,7 @@
 use crate::error::Result;
 use libtelnet_rs::events::{TelnetEvents, TelnetIAC, TelnetNegotiation, TelnetSubnegotiation};
+use libtelnet_rs::compatibility::CompatibilityTable;
+use libtelnet_rs::telnet::op_command as Op;
 use libtelnet_rs::Parser;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -24,12 +26,18 @@ where
     R: Read,
 {
     pub fn new(reader: R, buf_size: usize) -> Self {
-        let telnet = Parser::with_capacity(4096);
+        let compat_table = CompatibilityTable::new();
+        // compat_table.support_local(86);
+        // compat_table.support_remote(86);
+        // compat_table.support_local(91);
+        // compat_table.support_remote(91);
+        let telnet = Parser::with_support_and_capacity(4096, compat_table);
+        let buf = VecDeque::new();
         Self {
             reader,
             recv_buf: vec![0u8; buf_size],
             parser: telnet,
-            buf: VecDeque::new(),
+            buf,
         }
     }
 
@@ -44,7 +52,6 @@ where
             return Ok(TelnetEvent::Disconnected);
         }
         let events = self.parser.receive(&self.recv_buf[..n]);
-        // let mut text = vec![];
         for event in events {
             match event {
                 TelnetEvents::IAC(TelnetIAC { command }) => {
@@ -54,11 +61,9 @@ where
                     log::trace!("TelnetNegotiation[command={}, option={}]", command, option);
                 }
                 TelnetEvents::DataReceive(bs) => {
-                    log::trace!("TelnetDataReceive[len={}]", bs.len());
                     self.buf.push_back(TelnetEvent::Text(bs));
                 }
                 TelnetEvents::DataSend(bs) => {
-                    log::trace!("TelnetDataSend[len={}]", bs.len());
                     self.buf.push_back(TelnetEvent::DataToSend(bs));
                 }
                 TelnetEvents::Subnegotiation(TelnetSubnegotiation { option, buffer }) => {
@@ -89,7 +94,6 @@ where
     pub fn new(writer: W) -> Self {
         Self {
             writer,
-            // encoder: Encoder::default(),
         }
     }
 

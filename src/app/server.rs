@@ -1,9 +1,9 @@
 use crate::auth;
 use crate::error::{Error, Result};
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
-use crate::protocol::Packet;
+use crate::protocol::cli::Packet;
 use crate::runtime::{Engine, EngineAction, RuntimeOutput, RuntimeOutputHandler};
-use crate::transport::{Outbound, Telnet, TelnetEvent};
+use crate::telnet::{Outbound, Telnet, TelnetEvent};
 use crate::ui::line::RawLines;
 use crate::ui::UserOutput;
 use crossbeam_channel::{unbounded, Sender};
@@ -41,9 +41,13 @@ pub fn start_from_mud_handle(evttx: Sender<Event>, from_mud: impl io::Read + Sen
                 }
                 Ok(TelnetEvent::Empty) => (),
                 Ok(TelnetEvent::DataToSend(bs)) => {
+                    log::trace!("TelnetDataSend[bytes={:?}]", bs);
                     evttx.send(Event::TelnetBytes(bs)).unwrap();
                 }
-                Ok(TelnetEvent::Text(bs)) => evttx.send(Event::WorldBytes(bs)).unwrap(),
+                Ok(TelnetEvent::Text(bs)) => {
+                    log::trace!("TelnetDataReceive[len={}]", bs.len());
+                    evttx.send(Event::WorldBytes(bs)).unwrap();
+                }
             }
         }
     });

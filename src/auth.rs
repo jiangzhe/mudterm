@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use crate::protocol::Packet;
+use crate::protocol::cli::Packet;
 use crypto::digest::Digest;
 use crypto::sha1::Sha1;
 use rand::RngCore;

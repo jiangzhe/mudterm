@@ -1,33 +1,34 @@
-use crate::map::{Edge, Edges, Node, Nodes};
+use crate::map::node::Nodes;
+use crate::map::edge::{Edge, Edges};
 use std::cmp::{Ord, Ordering};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-pub struct Planner<'a, N, E> {
-    nodes: &'a Nodes<N>,
-    edges: &'a Edges<E>,
+pub struct Planner<NS, ES> {
+    nodes: NS,
+    edges: ES,
 }
 
-impl<'a, N, E> Planner<'a, N, E>
+impl<NS, ES> Planner<NS, ES>
 where
-    N: Node,
-    E: Edge,
+    NS: Nodes,
+    ES: Edges,
 {
-    pub fn new(nodes: &'a Nodes<N>, edges: &'a Edges<E>) -> Self {
+    pub fn new(nodes: NS, edges: ES) -> Self {
         Self { nodes, edges }
     }
 
     /// 使用bfs进行路径搜索，返回的行走计划为路径栈。
     /// 出栈过程即顺序行走
-    pub fn walk(&self, fromid: u32, toid: u32) -> Vec<&E> {
+    pub fn walk(&self, fromid: u32, toid: u32) -> Vec<&ES::Edge> {
         if !self.nodes.contains(fromid) || !self.nodes.contains(toid) {
             return vec![];
         }
         // 这里使用Rc和RefCell是为了让优先队列与哈希表共用相同
-        let mut candidates = BinaryHeap::<Weight<E>>::new();
-        let mut prev = HashMap::<u32, Weight<E>>::new();
+        let mut candidates = BinaryHeap::new();
+        let mut prev = HashMap::<u32, Weight<ES::Edge>>::new();
         let mut reached = std::u32::MAX;
 
-        let pseudo_path = E::pseudo(fromid);
+        let pseudo_path = ES::Edge::pseudo(fromid);
         candidates.push(Weight {
             weight: 0,
             edge: &pseudo_path,
@@ -83,14 +84,14 @@ where
     }
 
     // 使用dfs生成遍历计划
-    pub fn traverse(&self, centerid: u32, depth: u32) -> Vec<&E> {
+    pub fn traverse(&self, centerid: u32, depth: u32) -> Vec<&ES::Edge> {
         if !self.nodes.contains(centerid) || depth < 1 {
             return vec![];
         }
         let mut currid = centerid;
         let mut reached = HashSet::<u32>::new();
         reached.insert(currid);
-        let mut candidates = Vec::<Depth<E>>::new();
+        let mut candidates = Vec::new();
         for exit in self.edges.exits(currid) {
             candidates.push(Depth {
                 depth: 1,
@@ -177,7 +178,9 @@ impl<'a, E> Eq for Weight<'a, E> {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::Node;
+    use crate::map::node::{NodeMap, Node};
+    use crate::map::edge::{EdgeMap, Edge};
+    use std::sync::Arc;
 
     #[test]
     fn test_ref_clone() {
@@ -200,16 +203,16 @@ mod tests {
 
     #[test]
     fn test_planner_simple_walk() {
-        let mut nodes = Nodes::<N>::new();
+        let mut nodes = NodeMap::new();
         nodes.put(N { id: 1 });
         nodes.put(N { id: 2 });
-        let mut edges = Edges::<E>::new();
+        let mut edges = EdgeMap::new();
         edges.insert(E {
             startid: 1,
             endid: 2,
             weight: 1,
         });
-        let planner = Planner::new(&nodes, &edges);
+        let planner = Planner::new(Arc::new(nodes), Arc::new(edges));
         let rs = planner.walk(1, 2);
         println!("{:?}", rs);
         assert_eq!(
@@ -224,13 +227,13 @@ mod tests {
 
     #[test]
     fn test_planner_complex_walk() {
-        let mut nodes = Nodes::new();
+        let mut nodes = NodeMap::new();
         nodes.put(N { id: 1 });
         nodes.put(N { id: 2 });
         nodes.put(N { id: 3 });
         nodes.put(N { id: 4 });
         nodes.put(N { id: 5 });
-        let mut edges = Edges::new();
+        let mut edges = EdgeMap::new();
         edges.insert(E {
             startid: 1,
             endid: 2,
@@ -261,7 +264,7 @@ mod tests {
             endid: 5,
             weight: 10,
         });
-        let planner = Planner::new(&nodes, &edges);
+        let planner = Planner::new(nodes, edges);
         let rs = planner.walk(1, 5);
         println!("{:?}", rs);
         assert_eq!(
@@ -293,11 +296,11 @@ mod tests {
 
     #[test]
     fn test_planner_simple_traverse() {
-        let mut nodes = Nodes::<N>::new();
+        let mut nodes = NodeMap::new();
         nodes.put(N { id: 1 });
         nodes.put(N { id: 2 });
         nodes.put(N { id: 3 });
-        let mut edges = Edges::<E>::new();
+        let mut edges = EdgeMap::new();
         edges.insert(E {
             startid: 1,
             endid: 2,
@@ -313,7 +316,7 @@ mod tests {
             endid: 1,
             weight: 1,
         });
-        let planner = Planner::new(&nodes, &edges);
+        let planner = Planner::new(nodes, edges);
         let mut rs = planner.traverse(1, 2);
         rs.reverse();
         println!("{:?}", rs);
@@ -336,14 +339,14 @@ mod tests {
 
     #[test]
     fn test_planner_complex_traverse() {
-        let mut nodes = Nodes::<N>::new();
+        let mut nodes = NodeMap::new();
         nodes.put(N { id: 1 });
         nodes.put(N { id: 2 });
         nodes.put(N { id: 3 });
         nodes.put(N { id: 4 });
         nodes.put(N { id: 5 });
         nodes.put(N { id: 6 });
-        let mut edges = Edges::<E>::new();
+        let mut edges = EdgeMap::new();
         // 1 -- 2 -- 3
         // |
         // 4 -- 5
@@ -399,7 +402,7 @@ mod tests {
             endid: 4,
             weight: 1,
         });
-        let planner = Planner::new(&nodes, &edges);
+        let planner = Planner::new(nodes, edges);
         let mut rs = planner.traverse(1, 2);
         rs.reverse();
         println!("{:#?}", rs);

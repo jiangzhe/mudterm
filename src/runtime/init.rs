@@ -5,14 +5,21 @@ use crate::runtime::engine;
 use crate::runtime::engine::EngineAction;
 use crate::runtime::queue::ActionQueue;
 use crate::runtime::trigger::{TriggerExtra, TriggerFlags, TriggerModel};
-use crate::runtime::timer::{Timers, TimerModel, TimerFlags};
+use crate::runtime::timer::{TimerModel, TimerFlags};
 use crate::runtime::vars::Variables;
+use crate::map::plan::Planner;
+use crate::map::node::{NodeMap, FilteredNodes};
+use crate::map::edge::{EdgeMap, FilteredEdges};
+use crate::map::mapper::Mapper;
+use crate::map::path::PathCategory;
 use crate::ui::line::Line;
 use crate::ui::style::{Color, Style};
 use crate::ui::UserOutput;
 use std::time::Duration;
-use mlua::Lua;
+use std::sync::{Arc, Mutex};
+use mlua::{Lua, ToLua};
 use uuid::Uuid;
+use rusqlite::Connection;
 
 /// 初始化运行时
 ///
@@ -20,20 +27,21 @@ use uuid::Uuid;
 ///    对其中的值进行设置和查询
 /// 2. 定义Lua脚本引擎中的的核心函数
 ///    有一部分函数借鉴了MUSHClient的函数签名。
-pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
+pub fn init_lua(lua: &Lua, vtb: &Variables, tmpq: &ActionQueue) -> Result<()> {
+    log::info!("initializing lua runtime");
     let globals = lua.globals();
 
     // 初始化SetVariable函数
-    let vars = vtl.clone();
+    let vars = vtb.clone();
     let set_variable = lua.create_function(move |_, (k, v): (String, String)| {
         log::trace!("SetVariable function called");
         vars.insert(k, v);
         Ok(())
     })?;
-    globals.set("SetVariable", set_variable)?;
+    register_function(&globals, "SetVariable", set_variable)?;
 
     // 初始化GetVariable函数
-    let vars = vtl.clone();
+    let vars = vtb.clone();
     let get_variable = lua.create_function(move |_, k: String| {
         log::trace!("GetVariable function called");
         match vars.get(&k) {
@@ -41,7 +49,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
             None => Ok(None),
         }
     })?;
-    globals.set("GetVariable", get_variable)?;
+    register_function(&globals, "GetVariable", get_variable)?;
 
     // 初始化SwitchCodec函数
     let queue = tmpq.clone();
@@ -56,11 +64,11 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         queue.push(EngineAction::SwitchCodec(new_code));
         Ok(())
     })?;
-    globals.set("SwitchCodec", switch_codec)?;
+    register_function(&globals, "SwitchCodec", switch_codec)?;
 
     // 重写print函数
     let print = lua.create_function(move |_, _: ()| Ok(()))?;
-    globals.set("print", print)?;
+    register_function(&globals, "print", print)?;
 
     // 初始化Send函数
     let queue = tmpq.clone();
@@ -69,7 +77,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         queue.push(EngineAction::ExecuteUserOutput(UserOutput::Cmd(s)));
         Ok(())
     })?;
-    globals.set("Send", send)?;
+    register_function(&globals, "Send", send)?;
 
     // 初始化Note函数
     let queue = tmpq.clone();
@@ -79,7 +87,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         queue.push(EngineAction::SendLineToUI(Line::fmt_note(s), None));
         Ok(())
     })?;
-    globals.set("Note", note)?;
+    register_function(&globals, "Note", note)?;
 
     // 初始化ColourNote函数
     let queue = tmpq.clone();
@@ -94,14 +102,14 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         ));
         Ok(())
     })?;
-    globals.set("ColourNote", colour_note)?;
+    register_function(&globals, "ColourNote", colour_note)?;
 
     // 初始化GetUniqueID函数
     let get_unique_id = lua.create_function(move |_, _: ()| {
         let id = Uuid::new_v4();
         Ok(id.to_simple().to_string())
     })?;
-    globals.set("GetUniqueID", get_unique_id)?;
+    register_function(&globals, "GetUniqueID", get_unique_id)?;
 
     // 别名常量
     let alias_flag: mlua::Table = lua.create_table()?;
@@ -111,8 +119,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
 
     // 别名回调注册表
     let alias_callbacks = lua.create_table()?;
-    lua.globals()
-        .set(engine::GLOBAL_ALIAS_CALLBACKS, alias_callbacks)?;
+    globals.set(engine::GLOBAL_ALIAS_CALLBACKS, alias_callbacks)?;
 
     // 初始化CreateAlias函数
     let queue = tmpq.clone();
@@ -161,7 +168,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
             Ok(())
         },
     )?;
-    globals.set("CreateAlias", create_alias)?;
+    register_function(&globals, "CreateAlias", create_alias)?;
 
     // 初始化DeleteAlias函数
     let queue = tmpq.clone();
@@ -170,7 +177,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         queue.push(EngineAction::DeleteAlias(name));
         Ok(())
     })?;
-    globals.set("DeleteAlias", delete_alias)?;
+    register_function(&globals, "DeleteAlias", delete_alias)?;
 
     // 触发器常量
     let trigger_flag: mlua::Table = lua.create_table()?;
@@ -181,8 +188,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
 
     // 触发器回调注册表
     let trigger_callbacks = lua.create_table()?;
-    lua.globals()
-        .set(engine::GLOBAL_TRIGGER_CALLBACKS, trigger_callbacks)?;
+    globals.set(engine::GLOBAL_TRIGGER_CALLBACKS, trigger_callbacks)?;
 
     // 初始化CreateTrigger函数
     let queue = tmpq.clone();
@@ -230,7 +236,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
             Ok(())
         },
     )?;
-    globals.set("CreateTrigger", create_trigger)?;
+    register_function(&globals, "CreateTrigger", create_trigger)?;
 
     // 初始化DeleteTrigger函数
     let queue = tmpq.clone();
@@ -239,7 +245,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         queue.push(EngineAction::DeleteTrigger(name));
         Ok(())
     })?;
-    globals.set("DeleteTrigger", delete_trigger)?;
+    register_function(&globals, "DeleteTrigger", delete_trigger)?;
 
     // 初始化EnableTriggerGroup函数
     let queue = tmpq.clone();
@@ -248,7 +254,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         queue.push(EngineAction::EnableTriggerGroup(name, enabled));
         Ok(())
     })?;
-    globals.set("EnableTriggerGroup", enable_trigger_group)?;
+    register_function(&globals, "EnableTriggerGroup", enable_trigger_group)?;
 
     // 定时器常量
     let timer_flag: mlua::Table = lua.create_table()?;
@@ -258,8 +264,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
 
     // 定时器回调注册表
     let timer_callbacks = lua.create_table()?;
-    lua.globals()
-        .set(engine::GLOBAL_TIMER_CALLBACKS, timer_callbacks)?;
+    globals.set(engine::GLOBAL_TIMER_CALLBACKS, timer_callbacks)?;
 
     // 初始化CreateTimer函数
     let queue = tmpq.clone();
@@ -280,7 +285,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
             queue.push(EngineAction::CreateTimer(tm));
             Ok(())
     })?;
-    globals.set("CreateTimer", create_timer)?;
+    register_function(&globals, "CreateTimer", create_timer)?;
 
     // 初始化DeleteTimer函数
     let queue = tmpq.clone();
@@ -290,7 +295,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
             queue.push(EngineAction::DeleteTimer(name));
             Ok(())
     })?;
-    globals.set("DeleteTimer", delete_timer)?;
+    register_function(&globals, "DeleteTimer", delete_timer)?;
 
     // 初始化EnableTimerGroup函数
     let queue = tmpq.clone();
@@ -299,7 +304,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         queue.push(EngineAction::EnableTimerGroup(name, enabled));
         Ok(())
     })?;
-    globals.set("EnableTimerGroup", enable_timer_group)?;
+    register_function(&globals, "EnableTimerGroup", enable_timer_group)?;
 
     // 初始化DoAfter函数
     let queue = tmpq.clone();
@@ -315,7 +320,7 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         queue.push(EngineAction::CreateTimer(tm));
         Ok(())
     })?;
-    globals.set("DoAfter", do_after)?;
+    register_function(&globals, "DoAfter", do_after)?;
 
     // 初始化LoadFile函数
     let queue = tmpq.clone();
@@ -323,7 +328,153 @@ pub fn init_lua(lua: &Lua, vtl: &Variables, tmpq: &ActionQueue) -> Result<()> {
         queue.push(EngineAction::LoadFile(path));
         Ok(())
     })?;
-    globals.set("LoadFile", load_file)?;
+    register_function(&globals, "LoadFile", load_file)?;
 
+    Ok(())
+}
+
+pub fn init_mapper(lua: &Lua, conn: Connection) -> Result<()> {
+    log::info!("initializing mapper");
+    let globals = lua.globals();
+
+    let rooms = NodeMap::load_from_db(&conn)?;
+    let paths = EdgeMap::load_from_db(&conn, &rooms)?;
+    let rooms = Arc::new(rooms);
+    let paths = Arc::new(paths);
+    
+    // 初始化FastWalk函数
+    let planner = Planner::new(rooms.clone(), paths.clone());
+    let fast_walk = lua.create_function(move |lua, (fromid, toid): (u32, u32)| {
+        let plan = planner.walk(fromid, toid);
+        plan.to_lua(lua)
+    })?;
+    register_function(&globals, "FastWalk", fast_walk)?;
+
+    // 初始化Walk函数
+    let planner = {
+        let paths = FilteredEdges::new(paths.clone(), |p| p.category != PathCategory::Bus);
+        Planner::new(rooms.clone(), paths.clone())
+    };
+    let walk = lua.create_function(move |lua, (fromid, toid): (u32, u32)| {
+        let plan = planner.walk(fromid, toid);
+        plan.to_lua(lua)
+    })?;
+    register_function(&globals, "Walk", walk)?;
+
+    // 初始化traverse函数
+    let planner = {
+        let paths = FilteredEdges::new(paths.clone(), |p| {
+            p.category != PathCategory::Bus && p.category != PathCategory::Boat
+        });
+        Planner::new(rooms.clone(), paths.clone())
+    };
+    let traverse = lua.create_function(move |lua, (centerid, depth): (u32, u32)| {
+        let plan = planner.traverse(centerid, depth);
+        plan.to_lua(lua)
+    })?;
+    register_function(&globals, "Traverse", traverse)?;
+
+    let conn = Arc::new(Mutex::new(conn));
+
+    // 初始化ListZones函数
+    let mapper = Mapper::new(conn.clone());
+    let list_zones = lua.create_function(move |lua, _: ()| {
+        let zones = mapper.list_zones()?;
+        zones.to_lua(lua)
+    })?;
+    register_function(&globals, "ListZones", list_zones)?;
+
+    // 初始化GetZoneById函数
+    let mapper = Mapper::new(conn.clone());
+    let find_zone_by_id = lua.create_function(move |lua, id: u32| {
+        match mapper.get_zone_by_id(id)? {
+            Some(zone) => Ok(zone.to_lua(lua)?),
+            None => Ok(mlua::Value::Nil),
+        }
+    })?;
+    register_function(&globals, "GetZoneById", find_zone_by_id)?;
+
+    // 初始化GetZoneByCode函数
+    let mapper = Mapper::new(conn.clone());
+    let find_zone_by_code = lua.create_function(move |lua, code: String| {
+        match mapper.get_zone_by_code(&code)? {
+            Some(zone) => Ok(zone.to_lua(lua)?),
+            None => Ok(mlua::Value::Nil),
+        }
+    })?;
+    register_function(&globals, "GetZoneByCode", find_zone_by_code)?;
+
+    // 初始化GetZoneByName函数
+    let mapper = Mapper::new(conn.clone());
+    let find_zone_by_name = lua.create_function(move |lua, name: String| {
+        match mapper.get_zone_by_name(&name)? {
+            Some(zone) => Ok(zone.to_lua(lua)?),
+            None => Ok(mlua::Value::Nil),
+        }
+    })?;
+    register_function(&globals, "GetZoneByName", find_zone_by_name)?;
+
+    // 初始化ListRoomsByZone函数
+    let mapper = Mapper::new(conn.clone());
+    let list_rooms_by_zone = lua.create_function(move |lua, zone: String| {
+        let rooms = mapper.list_rooms_by_zone(&zone)?;
+        if rooms.is_empty() {
+            return Ok(mlua::Value::Nil);
+        }
+        Ok(rooms.to_lua(lua)?)
+    })?;
+    register_function(&globals, "ListRoomsByZone", list_rooms_by_zone)?;
+
+    // 初始化ListRoomsByName函数
+    let mapper = Mapper::new(conn.clone());
+    let list_rooms_by_name = lua.create_function(move |lua, name: String| {
+        let rooms = mapper.list_rooms_by_name(&name)?;
+        if rooms.is_empty() {
+            return Ok(mlua::Value::Nil);
+        }
+        Ok(rooms.to_lua(lua)?)
+    })?;
+    register_function(&globals, "ListRoomsByName", list_rooms_by_name)?;
+
+    // 初始化ListRoomsByNameAndZone函数
+    let mapper = Mapper::new(conn.clone());
+    let list_rooms_by_name_and_zone = lua.create_function(move |lua, (name, zone): (String, String)| {
+        let rooms = mapper.list_rooms_by_name_and_zone(&name, &zone)?;
+        if rooms.is_empty() {
+            return Ok(mlua::Value::Nil);
+        }
+        Ok(rooms.to_lua(lua)?)
+    })?;
+    register_function(&globals, "ListRoomsByNameAndZone", list_rooms_by_name_and_zone)?;
+
+    // 初始化ListRoomsByDescription函数
+    let mapper = Mapper::new(conn.clone());
+    let list_rooms_by_description = lua.create_function(move |lua, description: String| {
+        let rooms = mapper.list_rooms_by_description(&description)?;
+        if rooms.is_empty() {
+            return Ok(mlua::Value::Nil);
+        }
+        Ok(rooms.to_lua(lua)?)
+    })?;
+    register_function(&globals, "ListRoomsByDescription", list_rooms_by_description)?;
+
+    // 初始化ListRoomsByNpc函数
+    let mapper = Mapper::new(conn.clone());
+    let list_rooms_by_npc = lua.create_function(move |lua, npc: String| {
+        let rooms = mapper.list_rooms_by_npc(&npc)?;
+        if rooms.is_empty() {
+            return Ok(mlua::Value::Nil);
+        }
+        Ok(rooms.to_lua(lua)?)
+    })?;
+    register_function(&globals, "ListRoomsByNpc", list_rooms_by_npc)?;
+
+    Ok(())
+}
+
+fn register_function<'lua>(namespace: &'lua mlua::Table, name: impl AsRef<str>, function: mlua::Function<'lua>) -> Result<()> {
+    let name = name.as_ref();
+    log::trace!("initializing function {}", name);
+    namespace.set(name, function)?;
     Ok(())
 }

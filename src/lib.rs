@@ -8,6 +8,6 @@ pub mod map;
 pub mod protocol;
 pub mod runtime;
 pub mod signal;
-pub mod transport;
+pub mod telnet;
 pub mod ui;
 pub mod userinput;

@@ -1,5 +1,8 @@
-use crate::map::{FromRow, Node};
+use crate::map::node::Node;
 use rusqlite::{Result, Row};
+use mlua::{Lua, ToLua, Value};
+use mlua::Result as LuaResult;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Room {
@@ -19,8 +22,8 @@ impl Node for Room {
     }
 }
 
-impl FromRow for Room {
-    fn from_row(row: &Row) -> Result<Self> {
+impl Room {
+    pub(crate) fn from_row(row: &Row) -> Result<Self> {
         Ok(Room {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -31,5 +34,24 @@ impl FromRow for Room {
             mapinfo: row.get(6)?,
             blockzone: row.get(7)?,
         })
+    }
+}
+
+impl<'lua> ToLua<'lua> for Room {
+    fn to_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+        ToLua::to_lua(&self, lua)
+    }
+}
+
+impl<'lua> ToLua<'lua> for &Room {
+    fn to_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+        let table = lua.create_table()?;
+        table.set("id", self.id)?;
+        table.set("name", &self.name[..])?;
+        table.set("code", &self.code[..])?;
+        table.set("description", &self.description[..])?;
+        table.set("exits", &self.exits[..])?;
+        table.set("zone", &self.zone[..])?;
+        Ok(Value::Table(table))
     }
 }

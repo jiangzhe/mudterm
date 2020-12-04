@@ -44,4 +44,11 @@ impl<T> From<crossbeam_channel::SendError<T>> for Error {
     }
 }
 
+impl From<Error> for mlua::Error {
+    fn from(src: Error) -> Self {
+        mlua::Error::RuntimeError(src.to_string())
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Error>;
+

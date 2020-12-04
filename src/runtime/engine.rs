@@ -14,7 +14,7 @@ use crate::runtime::vars::Variables;
 use crate::runtime::RuntimeOutput;
 use crate::runtime::delay_queue::{Delay, Delayed};
 use crate::runtime::timer::{Timers, Timer, TimerModel};
-use crate::ui::ansi::AnsiParser;
+use crate::protocol::ansi::AnsiParser;
 use crate::ui::line::{Line, Lines, RawLine};
 use crate::ui::UserOutput;
 use std::collections::VecDeque;
@@ -426,7 +426,6 @@ impl Engine {
 
     // 处理世界文本
     fn process_world_line(&mut self, raw: RawLine) {
-        // todo: 需要提前处理文字格式，以便于触发器使用
         self.parser.fill(raw.as_ref());
         let mut styled = vec![];
         while let Some(span) = self.parser.next_span() {
