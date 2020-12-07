@@ -8,7 +8,7 @@ pub struct Config {
     pub world: World,
     pub server: Server,
     pub client: Client,
-    pub term: Term,
+    pub runtime: Runtime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,18 +69,20 @@ impl Default for Client {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Term {
-    pub echo_cmd: bool,
+pub struct Runtime {
+    // pub echo_cmd: bool,
     pub cmd_delim: char,
     pub send_empty_cmd: bool,
+    pub init_script: String,
 }
 
-impl Default for Term {
+impl Default for Runtime {
     fn default() -> Self {
         Self {
-            echo_cmd: false,
+            // echo_cmd: false,
             cmd_delim: ';',
             send_empty_cmd: false,
+            init_script: String::new(),
         }
     }
 }

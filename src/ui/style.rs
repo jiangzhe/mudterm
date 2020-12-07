@@ -208,7 +208,14 @@ pub enum Color {
 
 impl Color {
     pub fn from_str_or_default(name: impl AsRef<str>, default: Color) -> Self {
-        match name.as_ref() {
+        match Self::from_str(name) {
+            Some(color) => color,
+            None => default,
+        }
+    }
+
+    pub fn from_str(name: impl AsRef<str>) -> Option<Self> {
+        let color = match name.as_ref() {
             "black" => Self::Black,
             "red" => Self::Red,
             "green" => Self::Green,
@@ -225,8 +232,9 @@ impl Color {
             "lightmagenta" => Self::LightMagenta,
             "lightcyan" => Self::LightCyan,
             "white" => Self::White,
-            _ => default,
-        }
+            _ => return None,
+        };
+        Some(color)
     }
 
     pub fn description(self) -> &'static str {

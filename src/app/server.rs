@@ -1,7 +1,7 @@
 use crate::auth;
 use crate::error::{Error, Result};
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
-use crate::protocol::cli::Packet;
+use crate::proto::cli::Packet;
 use crate::runtime::{Engine, EngineAction, RuntimeOutput, RuntimeOutputHandler};
 use crate::telnet::{Outbound, Telnet, TelnetEvent};
 use crate::ui::line::RawLines;

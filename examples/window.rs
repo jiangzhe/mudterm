@@ -1,6 +1,6 @@
 use gag::Redirect;
 use mudterm::error::{Error, Result};
-use mudterm::ui::ansi::AnsiParser;
+use mudterm::proto::ansi::Parser;
 use mudterm::ui::buffer::{Buffer, BufferVec};
 use mudterm::ui::layout::Rect;
 use mudterm::ui::line::{Line, RawLine, RawLines};
@@ -29,11 +29,13 @@ fn main() -> Result<()> {
     // run7()
 }
 
+#[allow(dead_code)]
 fn write_style<W: Write>(writer: &mut W, style: Style) -> Result<()> {
     write!(writer, "{}", style)?;
     Ok(())
 }
 
+#[allow(dead_code)]
 fn run7() -> Result<()> {
     let debuglog = File::create("window_debug.log")?;
     let _stderr_redirect = Redirect::stderr(debuglog)
@@ -97,6 +99,7 @@ fn run7() -> Result<()> {
 }
 
 // 测试上移
+#[allow(dead_code)]
 fn run6() -> Result<()> {
     let debuglog = File::create("window_debug.log")?;
     let _stderr_redirect = Redirect::stderr(debuglog)
@@ -127,6 +130,7 @@ fn run6() -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn run5() -> Result<()> {
     let debuglog = File::create("window_debug.log")?;
     let _stderr_redirect = Redirect::stderr(debuglog)
@@ -182,6 +186,7 @@ fn run5() -> Result<()> {
 }
 
 // 测试block
+#[allow(dead_code)]
 fn run4() -> Result<()> {
     let debuglog = File::create("window_debug.log")?;
     let _stderr_redirect = Redirect::stderr(debuglog)
@@ -235,6 +240,7 @@ fn run4() -> Result<()> {
 }
 
 // 测试buffer
+#[allow(dead_code)]
 fn run3() -> Result<()> {
     let debuglog = File::create("window_debug.log")?;
     let _stderr_redirect = Redirect::stderr(debuglog)
@@ -248,7 +254,7 @@ fn run3() -> Result<()> {
     let mut buf = BufferVec::empty(Rect::new(3, 3, 7, 10));
     buf.set_style(*buf.area(), Style::default().bg(Color::Blue));
 
-    let mut parser = AnsiParser::new();
+    let mut parser = Parser::new();
     parser.fill("\x1b[37;1m南京\x1b[44;1m是我的家乡\x1b[m");
     let mut line = Line::new(vec![]);
     while let Some(span) = parser.next_span() {
@@ -320,6 +326,7 @@ fn run3() -> Result<()> {
 }
 
 // 测试光标
+#[allow(dead_code)]
 fn run2() -> Result<()> {
     let debuglog = File::create("window_debug.log")?;
     let _stderr_redirect = Redirect::stderr(debuglog)
@@ -377,6 +384,7 @@ fn run2() -> Result<()> {
 }
 
 // 测试ANSI日志
+#[allow(dead_code)]
 fn run1() -> Result<()> {
     let debuglog = File::create("window_debug.log")?;
     let _stderr_redirect = Redirect::stderr(debuglog)
@@ -389,7 +397,7 @@ fn run1() -> Result<()> {
     // let mut lines = RawLines::unbounded();
     let mut lines = Vec::new();
     let mut curr_line = Line::new(vec![]);
-    let mut spans = AnsiParser::new();
+    let mut spans = Parser::new();
     spans.fill(read_file()?);
     while let Some(span) = spans.next_span() {
         // eprintln!("span={:?}", span);
@@ -451,6 +459,7 @@ fn run1() -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn render_lines<W: Write>(writer: &mut W, lines: &[Line], buf: &str) -> Result<()> {
     let (width, height) = terminal_size()?;
     for line in lines {
@@ -477,6 +486,7 @@ fn render_lines<W: Write>(writer: &mut W, lines: &[Line], buf: &str) -> Result<(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn render<W: Write>(writer: &mut W, lines: Vec<RawLine>, buf: &str) -> Result<()> {
     for line in lines {
         write!(writer, "{}", line.as_ref())?;
@@ -487,6 +497,7 @@ fn render<W: Write>(writer: &mut W, lines: Vec<RawLine>, buf: &str) -> Result<()
     Ok(())
 }
 
+#[allow(dead_code)]
 fn read_file() -> Result<String> {
     let mut s = String::new();
     let mut f = File::open("server2.log")?;

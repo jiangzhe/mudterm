@@ -5,7 +5,7 @@ pub mod conf;
 pub mod error;
 pub mod event;
 pub mod map;
-pub mod protocol;
+pub mod proto;
 pub mod runtime;
 pub mod signal;
 pub mod telnet;

@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::protocol::ansi::clear::ClearCells;
+use crate::proto::ansi::ClearCells;
 use crate::ui::buffer::BufferVec;
 use crate::ui::buffer::{Buffer, Cell};
 use crate::ui::layout::Rect;

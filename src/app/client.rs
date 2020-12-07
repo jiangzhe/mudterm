@@ -1,7 +1,6 @@
-use crate::conf;
 use crate::error::Result;
 use crate::event::{Event, EventHandler, NextStep, QuitHandler};
-use crate::protocol::cli::Packet;
+use crate::proto::cli::Packet;
 use crate::runtime::{Engine, EngineAction, RuntimeOutput, RuntimeOutputHandler};
 use crate::signal;
 use crate::ui::line::Lines;
@@ -30,7 +29,6 @@ pub fn start_signal_handle(evttx: Sender<Event>) -> thread::JoinHandle<()> {
 
 /// 启动UI渲染的后台线程
 pub fn start_ui_handle(
-    termconf: conf::Term,
     evttx: Sender<Event>,
 ) -> Result<(Sender<UIEvent>, thread::JoinHandle<()>)> {
     let (uitx, uirx) = unbounded::<UIEvent>();

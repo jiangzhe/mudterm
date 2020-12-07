@@ -14,7 +14,7 @@ use crate::runtime::vars::Variables;
 use crate::runtime::RuntimeOutput;
 use crate::runtime::delay_queue::{Delay, Delayed};
 use crate::runtime::timer::{Timers, Timer, TimerModel};
-use crate::protocol::ansi::AnsiParser;
+use crate::proto::ansi::Parser;
 use crate::ui::line::{Line, Lines, RawLine};
 use crate::ui::UserOutput;
 use std::collections::VecDeque;
@@ -63,13 +63,14 @@ pub struct Engine {
     // 临时队列，用于脚本执行生成操作的临时处理队列
     tmpq: ActionQueue,
     mud_codec: MudCodec,
-    parser: AnsiParser,
+    parser: Parser,
     cache: CacheText,
     aliases: Aliases,
     triggers: Triggers,
     timers: Timers,
     cmd_delim: char,
     send_empty_cmd: bool,
+    init_script: String,
     logger: Option<File>,
 }
 
@@ -82,14 +83,15 @@ impl Engine {
             actq: VecDeque::new(),
             tmpq: ActionQueue::new(),
             mud_codec: MudCodec::new(),
-            parser: AnsiParser::new(),
+            parser: Parser::new(),
             // only allow up to 5 lines for trigger
             cache: CacheText::new(5, 10),
             aliases: Aliases::new(),
             triggers: Triggers::new(),
             timers: Timers::new(),
-            cmd_delim: config.term.cmd_delim,
-            send_empty_cmd: config.term.send_empty_cmd,
+            cmd_delim: config.runtime.cmd_delim,
+            send_empty_cmd: config.runtime.send_empty_cmd,
+            init_script: config.runtime.init_script.to_owned(),
             logger: None,
         }
     }
@@ -100,6 +102,13 @@ impl Engine {
 
     pub fn init(&mut self) -> Result<()> {
         init_lua(&self.lua, &self.vars, &self.tmpq)?;
+        if !self.init_script.is_empty() {
+            log::info!("loading initial script '{}'", &self.init_script);
+            let mut f = File::open(&self.init_script)?;
+            let mut init_script = String::new();
+            f.read_to_string(&mut init_script)?;
+            self.lua.load(&init_script).exec()?;
+        }
         Ok(())
     }
 

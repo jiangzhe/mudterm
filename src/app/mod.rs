@@ -51,7 +51,7 @@ pub fn standalone(config: Config) -> Result<()> {
 
     // 6. start ui thread
     log::info!("starting thread handling user interface");
-    let (uitx, uihandle) = client::start_ui_handle(config.term, evttx.clone())?;
+    let (uitx, uihandle) = client::start_ui_handle(evttx.clone())?;
 
     // 7. start timer thread
     log::info!("starting thread handling timer");
@@ -104,7 +104,7 @@ pub fn client(config: Config) -> Result<()> {
 
     // 6. start ui thread
     log::info!("starting thread handling user interface");
-    let (uitx, uihandle) = client::start_ui_handle(config.term, evttx.clone())?;
+    let (uitx, uihandle) = client::start_ui_handle(evttx.clone())?;
 
     // 7. start timer thread
     log::info!("starting thread handling timer");
