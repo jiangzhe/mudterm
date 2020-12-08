@@ -10,7 +10,28 @@ impl std::fmt::Display for ClearCells {
     }
 }
 
-pub fn apply_ansi_sgr(mut style: Style, code: u8) -> Style {
+/// 给定SGR字符串，应用相应的文本格式并返回
+pub fn apply_sgr(mut style: Style, sgr: &str) -> Style {
+    let mut n = 0;
+    for c in sgr.chars() {
+        match c {
+            ';' => {
+                style = apply_sgr_code(style, n);
+                n = 0;
+            }
+            '0'..='9' => {
+                n *= 10;
+                n += (c as u8) - b'0';
+            }
+            other => {
+                unreachable!("unreachable char '{}' in sgm sequence", other)
+            }
+        }
+    }
+    apply_sgr_code(style, n)
+}
+
+fn apply_sgr_code(mut style: Style, code: u8) -> Style {
     match code {
         0 => Style::default(),
         1 => style.add_modifier(Modifier::BOLD),
@@ -83,6 +104,7 @@ pub fn apply_ansi_sgr(mut style: Style, code: u8) -> Style {
 }
 
 /// 将ansi字符流转换为ArcSpan流
+/// todo: move out and integrate with MXP
 #[derive(Debug)]
 pub struct Parser {
     style: Style,
@@ -204,7 +226,7 @@ impl Parser {
                         for c in buf[start..pos].chars() {
                             match c {
                                 ';' => {
-                                    style = apply_ansi_sgr(style, n);
+                                    style = apply_sgr_code(style, n);
                                     n = 0;
                                 }
                                 '0'..='9' => {
@@ -216,7 +238,7 @@ impl Parser {
                                 }
                             }
                         }
-                        style = apply_ansi_sgr(style, n);
+                        style = apply_sgr_code(style, n);
                         (style, pos + 1)
                     }
                     b'z' => {
