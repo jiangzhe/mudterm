@@ -26,7 +26,7 @@ where
     R: Read,
 {
     pub fn new(reader: R, buf_size: usize) -> Self {
-        let compat_table = CompatibilityTable::new();
+        let mut compat_table = CompatibilityTable::new();
         // compat_table.support_local(86);
         // compat_table.support_remote(86);
         // compat_table.support_local(91);

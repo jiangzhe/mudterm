@@ -2,18 +2,36 @@
 //!
 //! A good introduction to how to implement it in MUSHClient:
 //! http://www.gammon.com.au/forum/bbshowpost.php?bbsubject_id=222
-use crate::ui::line::Line;
 use crate::ui::style::Color;
 
 pub fn supports() -> &'static str {
     "+head +body +afk +title +username +pass +samp +h +high +i +option +bold +xch_page +reset +strong +recommend_option +support +ul +em +send +send.href +send.hint +send.xch_cmd +send.xch_hint +send.prompt +p +hr +html +user +password +a +a.href +a.xch_cmd +a.xch_hint +underline +b +img +img.src +img.xch_mode +pre +li +ol +c +c.fore +c.back +font +font.color +font.back +font.fgcolor +font.bgcolor +u +mxp +mxp.off +version +br +v +var +italic"
 }
 
+/// 精简后的MXP标签，主要用于MXP触发器
+#[derive(Debug, Clone)]
+pub enum Label {
+    None,
+    // 超链接
+    A{
+        href: String,
+        hint: String,
+    },
+    // 标题
+    H(u8),
+    // 发送命令
+    S{
+        href: String,
+        hint: String,
+    }
+}
+
+/// 目前支持MXP两种模式Open和Secure
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
     Open,
     Secure,
-    Locked,
+    // Locked,
     // Reset,
     // TempSecur,
     // LockOpen,
@@ -104,6 +122,7 @@ pub enum Token {
     LineEndedText(String),
     // H1 ~ H6
     Header(u8, bool),
+    Img(String),
     None,
 }
 
@@ -148,6 +167,7 @@ impl Token {
             "H4" => Some(Token::Header(4, start)),
             "H5" => Some(Token::Header(5, start)),
             "H6" => Some(Token::Header(6, start)),
+            "IMG" => Some(Token::Img(String::new())),
             _ => None,
         }
     }
@@ -211,6 +231,12 @@ impl Token {
                     _ => (),
                 }
             }
+            Token::Img(s) => {
+                match attr_name {
+                    "SRC" => *s = attr_value.to_owned(),
+                    _ => (),
+                }
+            }
             _ => (),
         }
     }
@@ -228,7 +254,7 @@ impl Token {
     //       <C red>  ==  <C FORE=red>
     pub fn apply_first_attr(&mut self, attr_name: &str) {
         match self {
-            Token::Expire(s) => *s = attr_name.to_owned(),
+            Token::Expire(s) | Token::Img(s) => *s = attr_name.to_owned(),
             Token::A{href, ..} => *href = attr_name.to_owned(),
             Token::Font{face, ..} => *face = attr_name.to_owned(),
             Token::Color{fg, ..} => if let Some(cl) = Color::from_str(attr_name) {
