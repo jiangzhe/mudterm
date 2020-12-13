@@ -1,15 +1,19 @@
 use crate::ui::style::{Color, Modifier, Style};
+use crate::proto::Label;
 
 /// 与tui::text::Span相似，可以在线程间传递
 #[derive(Clone)]
 pub struct Span {
     pub style: Style,
     pub content: String,
+    pub label: Label,
 }
 
 impl PartialEq for Span {
     fn eq(&self, other: &Self) -> bool {
-        self.style == other.style && self.content == other.content
+        self.label == other.label &&
+        self.style == other.style && 
+        self.content == other.content
     }
 }
 
@@ -26,9 +30,9 @@ impl std::fmt::Display for Span {
 }
 
 impl Span {
-    pub fn new(content: impl Into<String>, style: Style) -> Self {
+    pub fn new(content: impl Into<String>, style: Style, label: Label) -> Self {
         let content = content.into();
-        Self { style, content }
+        Self { style, content, label }
     }
 
     pub fn fmt_raw(content: impl Into<String>) -> Self {
@@ -44,7 +48,7 @@ impl Span {
         if !content.ends_with("\r\n") {
             content.push_str("\r\n");
         }
-        Self::new(content, style)
+        Self::new(content, style, Label::None)
     }
 
     pub fn fmt_err(content: impl Into<String>) -> Self {
@@ -56,7 +60,6 @@ impl Span {
         self.content.ends_with('\n')
     }
 
-    // 需要拷贝原字符串，但目前场景下并不常见
     #[inline]
     pub fn push_str(&mut self, s: impl AsRef<str>) {
         self.content.push_str(s.as_ref());
@@ -70,7 +73,7 @@ mod tests {
     #[test]
     fn test_push_str_to_span() {
         let s = String::from("hello中国");
-        let mut span = Span::new(s, Style::default());
+        let mut span = Span::new(s, Style::default(), Label::None);
         println!("span={}", span);
         span.push_str("你好");
         println!("span={}", span);

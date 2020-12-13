@@ -14,7 +14,7 @@ use crate::runtime::vars::Variables;
 use crate::runtime::RuntimeOutput;
 use crate::runtime::delay_queue::{Delay, Delayed};
 use crate::runtime::timer::{Timers, Timer, TimerModel};
-use crate::proto::ansi::Parser;
+use crate::proto::{Parser, Element};
 use crate::ui::line::{Line, Lines, RawLine};
 use crate::ui::UserOutput;
 use std::collections::VecDeque;
@@ -83,7 +83,7 @@ impl Engine {
             actq: VecDeque::new(),
             tmpq: ActionQueue::new(),
             mud_codec: MudCodec::new(),
-            parser: Parser::new(),
+            parser: Parser::default(),
             // only allow up to 5 lines for trigger
             cache: CacheText::new(5, 10),
             aliases: Aliases::new(),
@@ -108,6 +108,13 @@ impl Engine {
             let mut init_script = String::new();
             f.read_to_string(&mut init_script)?;
             self.lua.load(&init_script).exec()?;
+        }
+        let outputs = self.apply();
+        if !outputs.is_empty() {
+            log::warn!("initial script should NOT contain any IO operation");
+            for op in outputs {
+                log::trace!("runtime output ignored: {:?}", op);
+            }
         }
         Ok(())
     }
@@ -437,8 +444,24 @@ impl Engine {
     fn process_world_line(&mut self, raw: RawLine) {
         self.parser.fill(raw.as_ref());
         let mut styled = vec![];
-        while let Some(span) = self.parser.next_span() {
-            styled.push(span);
+        let mut mxp_events = vec![];
+        loop {
+            match self.parser.next() {
+                Element::None => {
+                    break;
+                }
+                Element::Span(span) => {
+                    // handle accumulation of mxp events
+                    styled.push(span);
+                }
+                other => {
+                    mxp_events.push(other);
+                }
+            }
+        }
+        if !mxp_events.is_empty() {
+            // 记录MXP事件
+            log::debug!("MXP events: {:?}", mxp_events);
         }
         let styled = Line::new(styled);
         // 添加进文本缓存，供触发器进行匹配
@@ -595,6 +618,7 @@ mod tests {
     use crate::ui::span::Span;
     use crate::ui::style::Style;
     use crate::ui::UserOutput;
+    use crate::proto::Label;
 
     #[test]
     fn test_engine_single_user_cmd() {
@@ -736,6 +760,7 @@ mod tests {
         lines.push_line(Line::new(vec![Span::new(
             "张三走了过来。\r\n",
             Style::default(),
+            Label::None,
         )]));
         assert_eq!(RuntimeOutput::ToUI(rawlines, lines), evts.remove(0));
         assert_eq!(
@@ -767,10 +792,12 @@ mod tests {
         lines.push_line(Line::new(vec![Span::new(
             "张三走了过来。\r\n",
             Style::default(),
+            Label::None,
         )]));
         lines.push_line(Line::new(vec![Span::new(
             "李四走了过来。\r\n",
             Style::default(),
+            Label::None,
         )]));
         assert_eq!(RuntimeOutput::ToUI(rawlines, lines), evts.remove(0));
         assert_eq!(
@@ -806,6 +833,7 @@ mod tests {
         lines.push_line(Line::new(vec![Span::new(
             "张三走了过来。\r\n",
             Style::default(),
+            Label::None,
         )]));
         assert_eq!(RuntimeOutput::ToUI(rawlines, lines), evts.remove(0));
         assert_eq!(
@@ -834,6 +862,7 @@ mod tests {
         lines.push_line(Line::new(vec![Span::new(
             "张三走了过来。\r\n",
             Style::default(),
+            Label::None,
         )]));
         assert_eq!(RuntimeOutput::ToUI(rawlines, lines), evts.remove(0));
         assert_eq!(

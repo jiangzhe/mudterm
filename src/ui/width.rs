@@ -94,6 +94,7 @@ mod tests {
     use crate::ui::line::Line;
     use crate::ui::span::Span;
     use crate::ui::style::Style;
+    use crate::proto::Label;
 
     #[test]
     fn test_append_width() {
@@ -106,8 +107,8 @@ mod tests {
         let s = Line::fmt_raw("hello");
         assert_eq!(5, s.append_width(0, true));
         let s = Line::new(vec![
-            Span::new("hello", Style::default()),
-            Span::new("\tworld", Style::default()),
+            Span::new("hello", Style::default(), Label::None),
+            Span::new("\tworld", Style::default(), Label::None),
         ]);
         assert_eq!(13, s.append_width(0, true));
     }

@@ -8,24 +8,6 @@ pub fn supports() -> &'static str {
     "+head +body +afk +title +username +pass +samp +h +high +i +option +bold +xch_page +reset +strong +recommend_option +support +ul +em +send +send.href +send.hint +send.xch_cmd +send.xch_hint +send.prompt +p +hr +html +user +password +a +a.href +a.xch_cmd +a.xch_hint +underline +b +img +img.src +img.xch_mode +pre +li +ol +c +c.fore +c.back +font +font.color +font.back +font.fgcolor +font.bgcolor +u +mxp +mxp.off +version +br +v +var +italic"
 }
 
-/// 精简后的MXP标签，主要用于MXP触发器
-#[derive(Debug, Clone)]
-pub enum Label {
-    None,
-    // 超链接
-    A{
-        href: String,
-        hint: String,
-    },
-    // 标题
-    H(u8),
-    // 发送命令
-    S{
-        href: String,
-        hint: String,
-    }
-}
-
 /// 目前支持MXP两种模式Open和Secure
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
@@ -89,14 +71,14 @@ pub enum Token {
     // <A href=... hint=... expire=...>
     A{
         href: String,
-        hint: Option<String>,
+        hint: String,
         expire: Option<String>,
     },
     AEnd,
     // <SEND href=... hint=... prompt expire=...>
     Send{
-        href: Option<String>,
-        hint: Option<String>,
+        href: String,
+        hint: String,
         prompt: bool,
         expire: Option<String>,
     },
@@ -177,11 +159,25 @@ impl Token {
     }
 
     pub fn new_a() -> Self {
-        Token::A{href: String::new(), hint: None, expire: None}
+        Token::A{href: String::new(), hint: String::new(), expire: None}
     }
 
     pub fn new_send() -> Self {
-        Token::Send{href: None, hint: None, prompt: false, expire: None}
+        Token::Send{href: String::new(), hint: String::new(), prompt: false, expire: None}
+    }
+
+    pub fn is_a(&self) -> bool {
+        match self {
+            Token::A{..} => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_send(&self) -> bool {
+        match self {
+            Token::Send{..} => true,
+            _ => false,
+        }
     }
 
     pub fn apply_attr_value(&mut self, attr_name: &str, attr_value: &str) {
@@ -215,15 +211,15 @@ impl Token {
             Token::A{href, hint, expire} => {
                 match attr_name {
                     "HREF" => *href = attr_value.to_owned(),
-                    "HINT" => *hint = Some(attr_value.to_owned()),
+                    "HINT" => *hint = attr_value.to_owned(),
                     "EXPIRE" => *expire = Some(attr_value.to_owned()),
                     _ => (),
                 }
             }
             Token::Send{href, hint, prompt, expire} => {
                 match attr_name {
-                    "HREF" => *href = Some(attr_value.to_owned()),
-                    "HINT" => *hint = Some(attr_value.to_owned()),
+                    "HREF" => *href = attr_value.to_owned(),
+                    "HINT" => *hint = attr_value.to_owned(),
                     "PROMPT" => if let Ok(p) = attr_value.parse() {
                         *prompt = p;
                     }
@@ -266,25 +262,26 @@ impl Token {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ParseResult {
+pub enum Tokenization {
     Ok(Token),
+    // 仅存在于严格模式下
     Invalid(String),
     // 等待新的输入
     Pending,
 }
 
-impl ParseResult {
+impl Tokenization {
 
     pub fn invalid(&self) -> bool {
         match self {
-            ParseResult::Invalid(_) => true,
+            Tokenization::Invalid(_) => true,
             _ => false,
         }
     }
 
     pub fn pending(&self) -> bool {
         match self {
-            ParseResult::Pending => true,
+            Tokenization::Pending => true,
             _ => false,
         }
     }
@@ -399,19 +396,33 @@ impl ParserState {
             ParserState::Amper{end, ..} => *end,
         }
     }
+
+    pub fn is_normal(&self) -> bool {
+        match self {
+            ParserState::Normal(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug)]
-pub struct Parser {
+pub struct Tokenizer {
     mode: Mode,
     state: ParserState,
     buf: String,
     token: Option<Token>,
     attr_name: Option<String>,
     n_applies: usize,
+    // 由于MUD服务可能不严格遵守MXP协议，
+    // 如pkuxkx，在普通文本中并未对'<', '>', '&'
+    // 进行转义处理。可能导致大量信息被判定
+    // 为不合法，这里可默认宽松处理，即如果解析结果
+    // 不合法，直接认定为普通文本进行处理，
+    // 所以状态机增加从各中间状态返回正常状态的变换
+    strict: bool,
 }
 
-impl Default for Parser {
+impl Default for Tokenizer {
     fn default() -> Self {
         Self{
             mode: Mode::Open,
@@ -420,78 +431,44 @@ impl Default for Parser {
             token: None,
             attr_name: None,
             n_applies: 0,
+            strict: false,
         }
     }
 }
 
-impl Parser {
+impl Tokenizer {
 
-    // 向Parser中填充字符串
+    // 创建一个严格模式的Tokenizer
+    pub fn strict() -> Self {
+        Self{
+            strict: true,
+            ..Default::default()
+        }
+    }
+
+    // 填充字符串
     pub fn fill(&mut self, input: &str) {
         self.buf.push_str(input);
     }
 
-    // 调用Parser解析缓存中的token
-    pub fn parse_next(&mut self) -> ParseResult {
-        match self.mode {
-            Mode::Open => self.open_next(),
-            Mode::Secure => self.secure_next(),
-            _ => unimplemented!(),
-        }
-    }
-
-    fn reset(&mut self) {
-        let Self{mode, state, buf, token, attr_name, n_applies} = self;
-        *mode = Mode::Open;
-        *state = ParserState::Normal(0);
-        buf.clear();
-        Self::clear_token(token, attr_name, n_applies);
-    }
-
-    fn clear_token(token: &mut Option<Token>, attr_name: &mut Option<String>, n_applies: &mut usize) {
-        *token = None;
-        *attr_name = None;
-        *n_applies = 0;
-    }
-
-    fn invalidate(&mut self, offset: usize) -> ParseResult {
-        let raw = self.buf[offset..].to_owned();
-        self.reset();
-        ParseResult::Invalid(raw)
-    }
-
-    // fn finish_token(token: &mut Option<Token>, state: &mut ParserState, attr_name: &mut Option<String>, offset: usize) -> ParseResult {
-    //     let tk = token.take().unwrap();
-    //     *state = ParserState::Normal(offset);
-    //     *attr_name = None;
-    //     ParseResult::Ok(tk)
-    // }
-
-    fn finish_token_at(&mut self, offset: usize) -> ParseResult {
-        let tk = self.token.take().unwrap();
-        self.state = ParserState::Normal(offset);
-        let Self{token, attr_name, n_applies, ..} = self;
-        Self::clear_token(token, attr_name, n_applies);
-        ParseResult::Ok(tk)
-    }
-
-    fn unify_text(buf: &str, start: usize, end: usize) -> String {
-        let text = &buf[start..end];
-        text.replace("\r\0", "")
-    }
-
-    fn open_next(&mut self) -> ParseResult {
+    // 解析缓存中的token
+    pub fn next(&mut self) -> Tokenization {
         let idx = self.state.start();
-        let Self{mode, state, buf, token, attr_name, n_applies} = self;
+        if self.state.is_normal() && idx == self.buf.len() {
+            return Tokenization::Pending;
+        }
+        let Self{mode, state, buf, 
+            token, attr_name, n_applies, strict} = self;
         for c in buf[idx..].chars() {
             match state {
                 ParserState::Normal(offset) => {
                     match c {
-                        '<' => {
+                        // 只在严格模式或者MXP安全模式下，才进行标签解析
+                        '<' if *strict || *mode == Mode::Secure => {
                             if *offset > idx {
                                 let text = Self::unify_text(buf, idx, *offset);
                                 self.state = ParserState::StartTagOpen(*offset+1);
-                                return ParseResult::Ok(Token::Text(text));
+                                return Tokenization::Ok(Token::Text(text));
                             }
                             *state = ParserState::StartTagOpen(*offset+1);
                         }
@@ -499,18 +476,19 @@ impl Parser {
                             if *offset > idx {
                                 let text = Self::unify_text(buf, idx, *offset);
                                 self.state = ParserState::Esc(*offset+1);
-                                return ParseResult::Ok(Token::Text(text));
+                                return Tokenization::Ok(Token::Text(text));
                             }
                             *state = ParserState::Esc(*offset+1);
                         }
-                        '&' => {
+                        // 只在严格模式或者MXP安全模式下，才进行html转义解析
+                        '&' if *strict || *mode == Mode::Secure => {
                             if *offset > idx {
                                 let text = Self::unify_text(buf, idx, *offset);
                                 *state = ParserState::Amper{
                                     start: *offset,
                                     end: *offset+1,
                                 };
-                                return ParseResult::Ok(Token::Text(text));
+                                return Tokenization::Ok(Token::Text(text));
                             }
                             *state = ParserState::Amper{
                                 start: *offset,
@@ -525,9 +503,12 @@ impl Parser {
                             }
                             text.push('\n');
                             // 根据MXP协议，换行切换为Open模式
-                            *mode = Mode::Open;
-                            *state = ParserState::Normal(*offset+1);
-                            return ParseResult::Ok(Token::LineEndedText(text));
+                            // *mode = Mode::Open;
+                            // *state = ParserState::Normal(*offset+1);
+                            // buf.clear();
+                            // *state = ParserState::Normal(0);
+                            self.reset();
+                            return Tokenization::Ok(Token::LineEndedText(text));
                         }
                         _ => {
                             *offset += c.len_utf8();
@@ -545,7 +526,8 @@ impl Parser {
                                 end: *offset+1,
                             };
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*offset+c.len_utf8()),
                     }
                 }
                 ParserState::EndTagOpen(offset) => {
@@ -556,7 +538,8 @@ impl Parser {
                                 end: *offset+1,
                             };
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*offset+c.len_utf8()),
                     }
                 }
                 ParserState::StartTagName{start, end} => {
@@ -571,20 +554,23 @@ impl Parser {
                                     *token = Some(tk);
                                     *state = ParserState::TagWhitespace(*end + 1);
                                 }
-                                None => return self.invalidate(idx),
+                                None if *strict => return self.invalidate(idx),
+                                _ => *state = ParserState::Normal(*end+1),
                             }
                         }
                         '>' => {
-                            let tag_name = &self.buf[*start..*end];
+                            let tag_name = &buf[*start..*end];
                             match Token::default_from_str(tag_name, true) {
                                 Some(tk) => {
                                     self.state = ParserState::Normal(*end+1);
-                                    return ParseResult::Ok(tk);
+                                    return Tokenization::Ok(tk);
                                 }
-                                None => return self.invalidate(idx),
+                                None if *strict => return self.invalidate(idx),
+                                _ => *state = ParserState::Normal(*end+1),
                             }
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*end+c.len_utf8()),
                     }
                 }
                 ParserState::EndTagName{start, end} => {
@@ -597,12 +583,17 @@ impl Parser {
                             match Token::default_from_str(tag_name, false) {
                                 Some(tk) => {
                                     *state = ParserState::Normal(*end+1);
-                                    return ParseResult::Ok(tk);
+                                    return Tokenization::Ok(tk);
                                 }
-                                None => return self.invalidate(idx),
+                                None if *strict => return self.invalidate(idx),
+                                _ => {
+                                    *state = ParserState::Normal(*end+1);
+                                    continue;
+                                }
                             }
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*end+c.len_utf8()),
                     }
                 }
                 ParserState::TagWhitespace(offset) => {
@@ -622,7 +613,8 @@ impl Parser {
                             // return Self::finish_token(token, state, attr_name, offset);
                             return self.finish_token_at(offset);
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*offset+c.len_utf8()),
                     }
                 }
                 ParserState::TagAttrName{start, end} => {
@@ -648,7 +640,8 @@ impl Parser {
                             let offset = *end+1;
                             return self.finish_token_at(offset);
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*end+c.len_utf8()),
                     }
                 }
                 ParserState::TagAttrQuoteNameOpen(offset) => {
@@ -656,7 +649,11 @@ impl Parser {
                         '"' => {
                             // 不允许空属性名称
                             log::warn!("empty attribute name found in MXP protocol");
-                            return self.invalidate(idx);
+                            if *strict {
+                                return self.invalidate(idx);
+                            } else {
+                                *state = ParserState::Normal(idx+1);
+                            }
                         }
                         _ => *state = ParserState::TagAttrQuoteName{start: *offset, end: *offset+1},
                     }
@@ -688,7 +685,8 @@ impl Parser {
                             let offset = *offset+1;
                             return self.finish_token_at(offset);
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*offset+c.len_utf8()),
                     }
                 }
                 ParserState::TagAttrAssign(offset) => {
@@ -762,13 +760,15 @@ impl Parser {
                             let offset = *offset+1;
                             return self.finish_token_at(offset);
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*offset+c.len_utf8()),
                     }
                 }
                 ParserState::Esc(offset) => {
                     match c {
                         '[' => *state = ParserState::EscBracket(*offset+1),
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*offset+c.len_utf8()),
                     }
                 }
                 ParserState::EscBracket(offset) => {
@@ -776,9 +776,10 @@ impl Parser {
                         '0'..='9' | ';' => *state = ParserState::CSI{start: *offset, end: *offset+1},
                         'm' => {
                             *state = ParserState::Normal(*offset+1);
-                            return ParseResult::Ok(Token::SGR(String::new()));
+                            return Tokenization::Ok(Token::SGR(String::new()));
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*offset+c.len_utf8()),
                     }
                 }
                 ParserState::CSI{start, end} => {
@@ -787,7 +788,7 @@ impl Parser {
                         'm' => {
                             let tk = Token::SGR(buf[*start..*end].to_owned());
                             *state = ParserState::Normal(*end+1);
-                            return ParseResult::Ok(tk);
+                            return Tokenization::Ok(tk);
                         }
                         'z' => {
                             match buf[*start..*end].parse::<u8>() {
@@ -795,27 +796,40 @@ impl Parser {
                                     let md = match n {
                                         0 => Mode::Open,
                                         1 => Mode::Secure,
-                                        _ => {
+                                        _ if *strict => {
                                             log::warn!("unhandled mxp mode change: {}", n);
                                             return self.invalidate(idx);
                                         }
+                                        _ => {
+                                            log::warn!("unhandled mxp mode change: {}", n);
+                                            *state = ParserState::Normal(*end+1);
+                                            continue;
+                                        }
                                     };
+                                    *mode = md;
                                     *state = ParserState::Normal(*end+1);
-                                    return ParseResult::Ok(Token::MxpMode(md));
+                                    return Tokenization::Ok(Token::MxpMode(md));
                                 }
-                                Err(e) => {
+                                Err(_) if *strict => {
                                     log::warn!("invalid sequence of mxp mode: {}", &buf[*start..*end]);
                                     return self.invalidate(idx);
                                 }
+                                _ => *state = ParserState::Normal(*end+c.len_utf8()),
                             }
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*end+c.len_utf8()),
                     }
                 }
                 ParserState::Amper{start, end} => {
                     if *end > *start + 7 {
                         // max length is 7
-                        return self.invalidate(idx);
+                        if *strict {
+                            return self.invalidate(idx);
+                        } else {
+                            *state = ParserState::Normal(*end+1);
+                            continue;
+                        }
                     }
                     match c {
                         'a'..='z' => *end += 1,
@@ -826,15 +840,20 @@ impl Parser {
                                 "&lt" => '<',
                                 "&gt" => '>',
                                 "&nbsp" => ' ',
-                                _ => {
+                                _ if *strict => {
                                     log::warn!("unhandled amper escape sequence {}", &buf[*start..*end]);
                                     return self.invalidate(idx);
                                 }
+                                _ => {
+                                    *state = ParserState::Normal(*end+c.len_utf8());
+                                    continue;
+                                }
                             };
                             *state = ParserState::Normal(*end+1);
-                            return ParseResult::Ok(Token::AmperChar(ac));
+                            return Tokenization::Ok(Token::AmperChar(ac));
                         }
-                        _ => return self.invalidate(idx),
+                        _ if *strict => return self.invalidate(idx),
+                        _ => *state = ParserState::Normal(*end+c.len_utf8()),
                     }
                 }
             }
@@ -845,10 +864,43 @@ impl Parser {
                 debug_assert_eq!(buf.len(), *offset);
                 let text = Self::unify_text(buf, idx, *offset);
                 self.reset();
-                ParseResult::Ok(Token::Text(text))
+                Tokenization::Ok(Token::Text(text))
             }
-            _ => ParseResult::Pending,
+            _ => Tokenization::Pending,
         }
+    }
+
+    fn reset(&mut self) {
+        let Self{mode, state, buf, token, attr_name, n_applies, ..} = self;
+        *mode = Mode::Open;
+        *state = ParserState::Normal(0);
+        buf.clear();
+        Self::clear_token(token, attr_name, n_applies);
+    }
+
+    fn clear_token(token: &mut Option<Token>, attr_name: &mut Option<String>, n_applies: &mut usize) {
+        *token = None;
+        *attr_name = None;
+        *n_applies = 0;
+    }
+
+    fn invalidate(&mut self, offset: usize) -> Tokenization {
+        let raw = self.buf[offset..].to_owned();
+        self.reset();
+        Tokenization::Invalid(raw)
+    }
+
+    fn finish_token_at(&mut self, offset: usize) -> Tokenization {
+        let tk = self.token.take().unwrap();
+        self.state = ParserState::Normal(offset);
+        let Self{token, attr_name, n_applies, ..} = self;
+        Self::clear_token(token, attr_name, n_applies);
+        Tokenization::Ok(tk)
+    }
+
+    fn unify_text(buf: &str, start: usize, end: usize) -> String {
+        let text = &buf[start..end];
+        text.replace("\r\0", "")
     }
 
     fn apply_attr(token: &mut Option<Token>, attr_name: &mut Option<String>, n_applies: &mut usize) {
@@ -872,11 +924,6 @@ impl Parser {
             }
         }
     }
-
-    // todo: 放松对标签的严格判定
-    fn secure_next(&mut self) -> ParseResult {
-        self.open_next()
-    }
 }
 
 #[cfg(test)]
@@ -884,181 +931,181 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mxp_bold() {
+    fn test_strict_mxp_bold() {
         let input = "<B><BOLD><STRONG></B>";
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::Bold(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Bold(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Bold(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Bold(false)), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::Bold(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Bold(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Bold(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Bold(false)), parser.next());
     }
 
     #[test]
-    fn test_mxp_italic() {
+    fn test_strict_mxp_italic() {
         let input = "<I><ITALIC><EM></I>";
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::Italic(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Italic(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Italic(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Italic(false)), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::Italic(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Italic(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Italic(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Italic(false)), parser.next());
     }
 
     #[test]
-    fn test_mxp_underline() {
+    fn test_strict_mxp_underline() {
         let input = "<U><UNDERLINE></U>";
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::Underline(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Underline(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Underline(false)), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::Underline(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Underline(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Underline(false)), parser.next());
     }
 
     #[test]
-    fn test_mxp_strikeout() {
+    fn test_strict_mxp_strikeout() {
         let input = "<S><STRIKEOUT></S>";
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::Strikeout(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Strikeout(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Strikeout(false)), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::Strikeout(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Strikeout(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Strikeout(false)), parser.next());
     }
 
     #[test]
-    fn test_mxp_color() {
+    fn test_strict_mxp_color() {
         let input = r#"<C><COLOR><COLOR FORE=red BACK="white"><COLOR green></C>"#;
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::Color{fg: Color::Gray, bg: None}), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Color{fg: Color::Gray, bg: None}), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Color{fg: Color::Red, bg: Some(Color::White)}), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Color{fg: Color::Green, bg: None}), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::ColorReset), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::Color{fg: Color::Gray, bg: None}), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Color{fg: Color::Gray, bg: None}), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Color{fg: Color::Red, bg: Some(Color::White)}), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Color{fg: Color::Green, bg: None}), parser.next());
+        assert_eq!(Tokenization::Ok(Token::ColorReset), parser.next());
     }
 
     #[test]
-    fn test_mxp_high() {
+    fn test_strict_mxp_high() {
         let input = "<H><HIGH></H>";
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::High(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::High(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::High(false)), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::High(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::High(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::High(false)), parser.next());
     }
 
     #[test]
-    fn test_mxp_font() {
+    fn test_strict_mxp_font() {
         let input = r#"<FONT><FONT FACE="simsun" SIZE=15><FONT "Courier New">"#;
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::new_font()), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Font{face: "simsun".to_owned(), size: Some(15), fg: None, bg: None}), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Font{face: "Courier New".to_owned(), size: None, fg: None, bg: None}), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::new_font()), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Font{face: "simsun".to_owned(), size: Some(15), fg: None, bg: None}), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Font{face: "Courier New".to_owned(), size: None, fg: None, bg: None}), parser.next());
     }
 
     #[test]
-    fn test_mxp_misc_tokens() {
+    fn test_strict_mxp_misc_tokens() {
         let input = r#"<NOBR><P></P><BR><SBR>&nbsp;"#;
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::NoBr), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::P(true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::P(false)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Br), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Sbr), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::AmperChar(' ')), parser.parse_next()); 
+        assert_eq!(Tokenization::Ok(Token::NoBr), parser.next());
+        assert_eq!(Tokenization::Ok(Token::P(true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::P(false)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Br), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Sbr), parser.next());
+        assert_eq!(Tokenization::Ok(Token::AmperChar(' ')), parser.next()); 
     }
 
     #[test]
-    fn test_mxp_a() {
+    fn test_strict_mxp_a() {
         let input = r#"<A href="pkuxkx.net" hint=click expire=nomore></A>"#;
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::A{
+        assert_eq!(Tokenization::Ok(Token::A{
             href: "pkuxkx.net".to_owned(),
-            hint: Some("click".to_owned()),
+            hint: "click".to_owned(),
             expire: Some("nomore".to_owned()),
-        }), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::AEnd), parser.parse_next());
+        }), parser.next());
+        assert_eq!(Tokenization::Ok(Token::AEnd), parser.next());
     }
 
     #[test]
-    fn test_mxp_headers() {
+    fn test_strict_mxp_headers() {
         let input = r#"<H1><H2><H3><H4><H5><H6></H1>"#;
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::Header(1, true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Header(2, true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Header(3, true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Header(4, true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Header(5, true)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::Header(6, true)), parser.parse_next()); 
-        assert_eq!(ParseResult::Ok(Token::Header(1, false)), parser.parse_next()); 
+        assert_eq!(Tokenization::Ok(Token::Header(1, true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Header(2, true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Header(3, true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Header(4, true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Header(5, true)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::Header(6, true)), parser.next()); 
+        assert_eq!(Tokenization::Ok(Token::Header(1, false)), parser.next()); 
     }
 
     #[test]
-    fn test_mxp_send() {
+    fn test_strict_mxp_send() {
         let input = r#"<SEND href="pkuxkx.net" hint="北大侠客行" prompt expire="nosend"></SEND>"#;
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::Send{
-            href: Some("pkuxkx.net".to_owned()),
-            hint: Some("北大侠客行".to_owned()),
+        assert_eq!(Tokenization::Ok(Token::Send{
+            href: "pkuxkx.net".to_owned(),
+            hint: "北大侠客行".to_owned(),
             prompt: true,
             expire: Some("nosend".to_owned()),
-        }), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::SendEnd), parser.parse_next());
+        }), parser.next());
+        assert_eq!(Tokenization::Ok(Token::SendEnd), parser.next());
     }
 
     #[test]
-    fn test_mxp_mode() {
+    fn test_strict_mxp_mode() {
         let input = "\x1b[0z\x1b[1z";
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::MxpMode(Mode::Open)), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::MxpMode(Mode::Secure)), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::MxpMode(Mode::Open)), parser.next());
+        assert_eq!(Tokenization::Ok(Token::MxpMode(Mode::Secure)), parser.next());
     }
 
     #[test]
-    fn test_mxp_sgr() {
+    fn test_strict_mxp_sgr() {
         let input = "\x1b[m\x1b[1;37;44m";
-        let mut parser = Parser::default();
+        let mut parser = Tokenizer::strict();
         parser.fill(input);
-        assert_eq!(ParseResult::Ok(Token::SGR("".to_owned())), parser.parse_next());
-        assert_eq!(ParseResult::Ok(Token::SGR("1;37;44".to_owned())), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::SGR("".to_owned())), parser.next());
+        assert_eq!(Tokenization::Ok(Token::SGR("1;37;44".to_owned())), parser.next());
     }
 
     #[test]
-    fn test_mxp_stream() {
-        let mut parser = Parser::default();
+    fn test_strict_mxp_stream() {
+        let mut parser = Tokenizer::strict();
         parser.fill("<SUPPO");
-        assert_eq!(ParseResult::Pending, parser.parse_next());
+        assert_eq!(Tokenization::Pending, parser.next());
         parser.fill("RT>");
-        assert_eq!(ParseResult::Ok(Token::Support), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::Support), parser.next());
         parser.fill("\x1b[1");
-        assert_eq!(ParseResult::Pending, parser.parse_next());
+        assert_eq!(Tokenization::Pending, parser.next());
         parser.fill("z<H1");
-        assert_eq!(ParseResult::Ok(Token::MxpMode(Mode::Secure)), parser.parse_next());
-        assert_eq!(ParseResult::Pending, parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::MxpMode(Mode::Secure)), parser.next());
+        assert_eq!(Tokenization::Pending, parser.next());
         parser.fill(">");
-        assert_eq!(ParseResult::Ok(Token::Header(1, true)), parser.parse_next());
+        assert_eq!(Tokenization::Ok(Token::Header(1, true)), parser.next());
     }
 
     #[test]
-    fn test_mxp_invalid() {
-        let mut parser = Parser::default();
+    fn test_strict_mxp_invalid() {
+        let mut parser = Tokenizer::strict();
         parser.fill("<1");
-        debug_assert!(parser.parse_next().invalid());
+        debug_assert!(parser.next().invalid());
         parser.fill("<x-");
-        debug_assert!(parser.parse_next().invalid());
+        debug_assert!(parser.next().invalid());
         parser.fill("\x1bN");
-        debug_assert!(parser.parse_next().invalid());
+        debug_assert!(parser.next().invalid());
         parser.fill("\x1b[1x");
-        debug_assert!(parser.parse_next().invalid());
+        debug_assert!(parser.next().invalid());
         parser.fill("&toolongsymbol;");
-        debug_assert!(parser.parse_next().invalid());
+        debug_assert!(parser.next().invalid());
         parser.fill("&nnnn;");
-        debug_assert!(parser.parse_next().invalid());
+        debug_assert!(parser.next().invalid());
     }
 }

@@ -1,11 +1,21 @@
 use bitflags::bitflags;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Style {
     pub fg: Option<Color>,
     pub bg: Option<Color>,
     pub add_modifier: Modifier,
     pub sub_modifier: Modifier,
+}
+
+impl PartialEq for Style {
+    fn eq(&self, other: &Self) -> bool {
+        let p0 = Style::default().patch(*self);
+        let p1 = Style::default().patch(*other);
+        p0.fg == p1.fg && p0.bg == p1.bg && 
+        p0.add_modifier == p1.add_modifier &&
+        p0.sub_modifier == p1.sub_modifier
+    }
 }
 
 impl Default for Style {

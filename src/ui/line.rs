@@ -1,6 +1,7 @@
 use crate::ui::span::Span;
 use crate::ui::style::{Color, Style};
 use crate::ui::width::AppendWidthTab8;
+use crate::proto::Label;
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,7 +162,7 @@ impl Lines {
             };
             lines.push_line(Line::new(vec![
                 Span::fmt_err(line),
-                Span::new("\r\n", Style::default()),
+                Span::new("\r\n", Style::default(), Label::None),
             ]));
         }
         lines
@@ -316,6 +317,7 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
                     let new_span = Span::new(
                         std::mem::replace(&mut new_content, String::new()),
                         new_style,
+                        span.label.clone(),
                     );
                     append_span(&mut curr_line, new_span);
                     lines.push(Line::new(std::mem::replace(&mut curr_line, Vec::new())));
@@ -326,7 +328,7 @@ pub fn wrap_line(line: &Line, max_width: usize, cjk: bool, lines: &mut Vec<Line>
             }
             // concat last span to curr_line
             if !new_content.is_empty() {
-                let new_span = Span::new(new_content, new_style);
+                let new_span = Span::new(new_content, new_style, span.label.clone());
                 curr_line.push(new_span);
             }
         }
@@ -417,14 +419,14 @@ mod tests {
     fn ended_span(s: &str) -> Span {
         let mut s = s.to_owned();
         s.push_str("\r\n");
-        Span::new(s, Style::default())
+        Span::new(s, Style::default(), Label::None)
     }
 
     fn partial_span(s: &str) -> Span {
-        Span::new(s, Style::default())
+        Span::new(s, Style::default(), Label::None)
     }
 
     fn red_span(s: &str) -> Span {
-        Span::new(s, Style::default().fg(Color::Red))
+        Span::new(s, Style::default().fg(Color::Red), Label::None)
     }
 }

@@ -1,6 +1,6 @@
 use gag::Redirect;
 use mudterm::error::{Error, Result};
-use mudterm::proto::ansi::Parser;
+use mudterm::proto::{Parser, Element};
 use mudterm::ui::buffer::{Buffer, BufferVec};
 use mudterm::ui::layout::Rect;
 use mudterm::ui::line::{Line, RawLine, RawLines};
@@ -254,10 +254,10 @@ fn run3() -> Result<()> {
     let mut buf = BufferVec::empty(Rect::new(3, 3, 7, 10));
     buf.set_style(*buf.area(), Style::default().bg(Color::Blue));
 
-    let mut parser = Parser::new();
+    let mut parser = Parser::default();
     parser.fill("\x1b[37;1m南京\x1b[44;1m是我的家乡\x1b[m");
     let mut line = Line::new(vec![]);
-    while let Some(span) = parser.next_span() {
+    while let Element::Span(span) = parser.next() {
         line.push_span(span);
     }
 
@@ -397,9 +397,9 @@ fn run1() -> Result<()> {
     // let mut lines = RawLines::unbounded();
     let mut lines = Vec::new();
     let mut curr_line = Line::new(vec![]);
-    let mut spans = Parser::new();
-    spans.fill(read_file()?);
-    while let Some(span) = spans.next_span() {
+    let mut spans = Parser::default();
+    spans.fill(&read_file()?);
+    while let Element::Span(span) = spans.next() {
         // eprintln!("span={:?}", span);
         // let s = if span.ended() {
         //     let mut s = span.content().to_owned();
