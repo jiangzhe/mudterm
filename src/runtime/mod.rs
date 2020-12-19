@@ -8,6 +8,7 @@ pub mod queue;
 pub mod sub;
 pub mod timer;
 pub mod trigger;
+pub mod mxp_trigger;
 pub mod vars;
 
 use crate::error::Result;

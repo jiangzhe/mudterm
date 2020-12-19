@@ -12,12 +12,14 @@ impl Triggers {
     ///
     /// 与match_first不同之处在于支持多行匹配
     pub fn trigger_first(&self, text: &CacheText) -> Option<(&Trigger, String, Vec<InlineStyle>)> {
-        for tr in self.0.values() {
-            if let Some(matches) = tr.match_trigger(text) {
-                return Some(matches);
-            }
-        }
-        None
+        self.0.values()
+            .find_map(|tr| tr.match_trigger(text))
+    }
+
+    pub fn trigger_all(&self, text: &CacheText) -> Vec<(&Trigger, String, Vec<InlineStyle>)> {
+        self.0.values()
+            .filter_map(|tr| tr.match_trigger(text))
+            .collect()
     }
 }
 
@@ -87,6 +89,8 @@ pub struct TriggerExtra {
 }
 
 impl ModelExtra for TriggerExtra {
+    type Input = String;
+    
     fn enabled(&self) -> bool {
         self.flags.contains(TriggerFlags::ENABLED)
     }
@@ -109,6 +113,10 @@ impl ModelExtra for TriggerExtra {
         } else {
             self.flags.remove(TriggerFlags::KEEP_EVALUATING);
         }
+    }
+
+    fn is_match(&self, input: &Self::Input) -> bool {
+        true
     }
 }
 

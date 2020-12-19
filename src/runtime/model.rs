@@ -11,14 +11,9 @@ pub struct Model<X> {
     pub extra: X,
 }
 
-// impl<X: std::fmt::Debug> Model<X> {
-//     pub fn compile(self) -> Result<ModelExec<Self>> {
-//         let re = Regex::new(&self.pattern)?;
-//         Ok(ModelExec::new(self, re))
-//     }
-// }
-
 pub trait ModelExtra {
+    type Input: AsRef<str>;
+
     fn enabled(&self) -> bool;
 
     fn set_enabled(&mut self, enabled: bool);
@@ -26,6 +21,8 @@ pub trait ModelExtra {
     fn keep_evaluating(&self) -> bool;
 
     fn set_keep_evaluating(&mut self, keep_evaluating: bool);
+
+    fn is_match(&self, input: &Self::Input) -> bool;
 }
 
 /// 抽象对正则与脚本的编译
@@ -41,13 +38,14 @@ impl<M: PartialEq> PartialEq for ModelExec<M> {
     }
 }
 
-impl<X> ModelExec<Model<X>> {
+
+impl<X: ModelExtra> ModelExec<Model<X>> {
     pub fn new(model: Model<X>, re: Regex) -> Self {
         Self { model, re }
     }
 
-    pub fn is_match(&self, input: impl AsRef<str>) -> bool {
-        self.re.is_match(input.as_ref())
+    pub fn is_match(&self, input: &X::Input) -> bool {
+        self.model.extra.is_match(input) && self.re.is_match(input.as_ref())
     }
 
     // todo: 增加style的捕获
@@ -108,9 +106,10 @@ impl<'lua> ToLua<'lua> for ModelCaptures {
     }
 }
 
-pub trait ModelStore<X>
+pub trait ModelStore<X, I>
 where
-    X: ModelExtra,
+    X: ModelExtra<Input=I>,
+    I: AsRef<str>,
 {
     /// 添加模型，出错则返回原值
     fn add(&mut self, me: ModelExec<Model<X>>) -> std::result::Result<(), ModelExec<Model<X>>>;
@@ -134,10 +133,10 @@ where
     fn len(&self) -> usize;
 
     /// 匹配输出第一个匹配到的模型
-    fn match_first(&self, input: impl AsRef<str>) -> Option<&ModelExec<Model<X>>>;
+    fn match_first(&self, input: &I) -> Option<&ModelExec<Model<X>>>;
 
     /// 输出所有匹配成功的模型
-    fn match_all(&self, input: impl AsRef<str>) -> Vec<&ModelExec<Model<X>>>;
+    fn match_all(&self, input: &I) -> Vec<&ModelExec<Model<X>>>;
 }
 
 #[derive(Debug)]
@@ -149,7 +148,11 @@ impl<X> MapModelStore<ModelExec<Model<X>>> {
     }
 }
 
-impl<X: ModelExtra> ModelStore<X> for MapModelStore<ModelExec<Model<X>>> {
+impl<X, I> ModelStore<X, I> for MapModelStore<ModelExec<Model<X>>>
+where
+    X: ModelExtra<Input=I>,
+    I: AsRef<str>,
+{
     fn add(&mut self, me: ModelExec<Model<X>>) -> std::result::Result<(), ModelExec<Model<X>>> {
         if self.0.contains_key(&me.model.name) {
             return Err(me);
@@ -194,19 +197,19 @@ impl<X: ModelExtra> ModelStore<X> for MapModelStore<ModelExec<Model<X>>> {
         self.0.len()
     }
 
-    fn match_first(&self, input: impl AsRef<str>) -> Option<&ModelExec<Model<X>>> {
+    fn match_first(&self, input: &I) -> Option<&ModelExec<Model<X>>> {
         for me in self.0.values() {
-            if me.model.extra.enabled() && me.is_match(&input) {
+            if me.model.extra.enabled() && me.is_match(input) {
                 return Some(me);
             }
         }
         None
     }
 
-    fn match_all(&self, input: impl AsRef<str>) -> Vec<&ModelExec<Model<X>>> {
+    fn match_all(&self, input: &I) -> Vec<&ModelExec<Model<X>>> {
         let mut rs = vec![];
         for me in self.0.values() {
-            if me.model.extra.enabled() && me.is_match(&input) {
+            if me.model.extra.enabled() && me.is_match(input) {
                 rs.push(me);
             }
         }
@@ -232,7 +235,11 @@ impl<X> VecModelStore<ModelExec<Model<X>>> {
     }
 }
 
-impl<X: ModelExtra> ModelStore<X> for VecModelStore<ModelExec<Model<X>>> {
+impl<X, I> ModelStore<X, I> for VecModelStore<ModelExec<Model<X>>>
+where
+    X: ModelExtra<Input=I>,
+    I: AsRef<str>,
+{
     fn add(&mut self, me: ModelExec<Model<X>>) -> std::result::Result<(), ModelExec<Model<X>>> {
         let opt = if me.model.name.is_empty() {
             None
@@ -308,19 +315,19 @@ impl<X: ModelExtra> ModelStore<X> for VecModelStore<ModelExec<Model<X>>> {
         self.0.len()
     }
 
-    fn match_first(&self, input: impl AsRef<str>) -> Option<&ModelExec<Model<X>>> {
+    fn match_first(&self, input: &I) -> Option<&ModelExec<Model<X>>> {
         for me in &self.0 {
-            if me.model.extra.enabled() && me.is_match(&input) {
+            if me.model.extra.enabled() && me.is_match(input) {
                 return Some(me);
             }
         }
         None
     }
 
-    fn match_all(&self, input: impl AsRef<str>) -> Vec<&ModelExec<Model<X>>> {
+    fn match_all(&self, input: &I) -> Vec<&ModelExec<Model<X>>> {
         let mut rs = vec![];
         for me in &self.0 {
-            if me.model.extra.enabled() && me.is_match(&input) {
+            if me.model.extra.enabled() && me.is_match(input) {
                 rs.push(me);
             }
         }

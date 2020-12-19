@@ -469,18 +469,19 @@ impl Engine {
         // 推送到事件队列
         self.tmpq
             .push(EngineAction::SendLineToUI(styled, Some(raw)));
-        // 使用is_match预先匹配，最多一个触发器
-        if let Some((trigger, text, styles)) = self.triggers.trigger_first(&self.cache) {
-            if let Err(e) = self.exec_trigger(trigger, text, styles) {
+        // 使用is_match预先匹配
+        let trs = self.triggers.trigger_all(&self.cache);
+        for (tr, text, styles) in trs {
+            if let Err(e) = self.exec_trigger(tr, text, styles) {
                 let err_lines = Lines::fmt_err(e.to_string());
                 for err_line in err_lines.into_vec() {
                     self.tmpq.push(EngineAction::SendLineToUI(err_line, None));
                 }
             }
             // 对OneShot触发器进行删除
-            if trigger.model.extra.one_shot() {
+            if tr.model.extra.one_shot() {
                 self.tmpq
-                    .push(EngineAction::DeleteTrigger(trigger.model.name.to_owned()));
+                    .push(EngineAction::DeleteTrigger(tr.model.name.to_owned()));
             }
         }
     }
