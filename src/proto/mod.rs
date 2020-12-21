@@ -256,7 +256,7 @@ impl Parser {
                                 return elem;
                             }
                         }
-                        Token::Header(n, false) => {
+                        Token::Header(_, false) => {
                             if let Some(Label::H(_)) = self.ls.peek() {
                                 return self.output_and_clear_label(true);
                             }

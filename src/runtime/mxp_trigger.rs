@@ -1,5 +1,5 @@
 use crate::ui::span::Span;
-use crate::runtime::model::{MapModelStore, ModelExec, Model};
+use crate::runtime::model::{MapModelStore, Model};
 use crate::proto::Label;
 
 // pub type MxpTriggers = MapModelStore<MxpTrigger>;

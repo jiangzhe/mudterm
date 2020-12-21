@@ -155,7 +155,7 @@ impl Engine {
                 self.mud_codec.switch_codec(code);
             }
             EngineAction::CreateAlias(alias) => {
-                let name = alias.model.name.to_owned();
+                let name = alias.name.to_owned();
                 if let Err(alias) = self.create_alias(alias) {
                     let err_lines = Lines::fmt_err(format!("创建别名失败：{:?}", alias));
                     for err_line in err_lines.into_vec() {
@@ -178,7 +178,7 @@ impl Engine {
                 }
             }
             EngineAction::CreateTrigger(trigger) => {
-                let name = trigger.model.name.to_owned();
+                let name = trigger.name.to_owned();
                 if let Err(trigger) = self.create_trigger(trigger) {
                     let err_lines = Lines::fmt_err(format!("创建触发器失败：{:?}", trigger));
                     for err_line in err_lines.into_vec() {
@@ -285,15 +285,15 @@ impl Engine {
         })?;
         let wildcards = alias.captures(&text)?;
         let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_ALIAS_CALLBACKS)?;
-        let func: mlua::Function = callbacks.get(&alias.model.name[..])?;
+        let func: mlua::Function = callbacks.get(&alias.name[..])?;
         func.call((name, text, wildcards))?;
         Ok(())
     }
 
     /// 创建别名
     fn create_alias(&mut self, alias: Alias) -> std::result::Result<(), Alias> {
-        log::debug!("Creating alias {}", alias.model.name);
-        log::trace!("pattern={}", alias.model.pattern);
+        log::debug!("Creating alias {}", alias.name);
+        log::trace!("pattern={}", alias.pattern);
         self.aliases.add(alias)
     }
 
@@ -327,19 +327,19 @@ impl Engine {
         text: String,
         styles: Vec<InlineStyle>,
     ) -> Result<()> {
-        log::debug!("Executing trigger {}", trigger.model.name);
+        log::debug!("Executing trigger {}", trigger.name);
         log::trace!("matched text={}", text);
         let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_TRIGGER_CALLBACKS)?;
-        let func: mlua::Function = callbacks.get(&trigger.model.name[..])?;
+        let func: mlua::Function = callbacks.get(&trigger.name[..])?;
         let wildcards = trigger.captures(&text)?;
-        func.call((trigger.model.name.to_owned(), text, wildcards, styles))?;
+        func.call((trigger.name.to_owned(), text, wildcards, styles))?;
         Ok(())
     }
 
     /// 创建触发器
     fn create_trigger(&mut self, trigger: Trigger) -> std::result::Result<(), Trigger> {
-        log::debug!("Creating trigger {}", trigger.model.name);
-        log::trace!("pattern={}", trigger.model.pattern);
+        log::debug!("Creating trigger {}", trigger.name);
+        log::trace!("pattern={}", trigger.pattern);
         self.triggers.add(trigger)
     }
 
@@ -479,9 +479,9 @@ impl Engine {
                 }
             }
             // 对OneShot触发器进行删除
-            if tr.model.extra.one_shot() {
+            if tr.extra.one_shot() {
                 self.tmpq
-                    .push(EngineAction::DeleteTrigger(tr.model.name.to_owned()));
+                    .push(EngineAction::DeleteTrigger(tr.name.to_owned()));
             }
         }
     }
@@ -589,12 +589,12 @@ impl Engine {
             } else if let Some(alias) = self.aliases.match_first(&raw_line) {
                 log::debug!(
                     "alias[{}/{}: {}] matched",
-                    alias.model.group,
-                    alias.model.name,
-                    alias.model.pattern
+                    alias.group,
+                    alias.name,
+                    alias.pattern
                 );
                 cmds.push(PostCmd::Alias {
-                    name: alias.model.name.clone(),
+                    name: alias.name.clone(),
                     text: raw_line,
                 })
             } else {

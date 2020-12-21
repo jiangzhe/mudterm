@@ -1,9 +1,6 @@
-use crate::error::Result;
 use crate::runtime::cache::{CacheText, InlineStyle};
-use crate::runtime::model::{MapModelStore, Model, ModelExec, ModelExtra};
+use crate::runtime::model::{MapModelStore, Model, ModelMatch};
 use bitflags::bitflags;
-use regex::Regex;
-use std::borrow::Cow;
 
 pub type Triggers = MapModelStore<Trigger>;
 
@@ -23,13 +20,13 @@ impl Triggers {
     }
 }
 
-pub type Trigger = ModelExec<TriggerModel>;
+pub type Trigger = Model<TriggerExtra>;
 
 impl Trigger {
     // /// 针对多行匹配进行处理
     pub fn match_trigger(&self, text: &CacheText) -> Option<(&Trigger, String, Vec<InlineStyle>)> {
-        if self.model.extra.match_lines > 1 {
-            if let Some(multilines) = text.lastn_trimmed(self.model.extra.match_lines as usize) {
+        if self.extra.match_lines > 1 {
+            if let Some(multilines) = text.lastn_trimmed(self.extra.match_lines as usize) {
                 if self.is_match(multilines) {
                     return Some((self, multilines.to_owned(), vec![]));
                 }
@@ -45,26 +42,26 @@ impl Trigger {
     }
 }
 
-pub type TriggerModel = Model<TriggerExtra>;
+// pub type TriggerModel = Model<TriggerExtra>;
 
-impl TriggerModel {
-    pub fn compile(self) -> Result<Trigger> {
-        let pattern = if self.extra.match_lines > 1 {
-            if self.pattern.starts_with("(?m)") {
-                Cow::Borrowed(&self.pattern[..])
-            } else {
-                let mut s = String::new();
-                s.push_str("(?m)");
-                s.push_str(&self.pattern);
-                Cow::Owned(s)
-            }
-        } else {
-            Cow::Borrowed(&self.pattern[..])
-        };
-        let re = Regex::new(&pattern)?;
-        Ok(Trigger::new(self, re))
-    }
-}
+// impl TriggerModel {
+//     pub fn compile(self) -> Result<Trigger> {
+//         let pattern = if self.extra.match_lines > 1 {
+//             if self.pattern.starts_with("(?m)") {
+//                 Cow::Borrowed(&self.pattern[..])
+//             } else {
+//                 let mut s = String::new();
+//                 s.push_str("(?m)");
+//                 s.push_str(&self.pattern);
+//                 Cow::Owned(s)
+//             }
+//         } else {
+//             Cow::Borrowed(&self.pattern[..])
+//         };
+//         let re = Regex::new(&pattern)?;
+//         Ok(Trigger::new(self, re))
+//     }
+// }
 
 bitflags! {
     pub struct TriggerFlags: u16 {
@@ -88,35 +85,40 @@ pub struct TriggerExtra {
     pub flags: TriggerFlags,
 }
 
-impl ModelExtra for TriggerExtra {
-    type Input = String;
-    
-    fn enabled(&self) -> bool {
-        self.flags.contains(TriggerFlags::ENABLED)
+impl Default for TriggerExtra {
+    fn default() -> Self {
+        Self{match_lines: 1, flags: TriggerFlags::empty()}
     }
+}
 
-    fn set_enabled(&mut self, enabled: bool) {
-        if enabled {
-            self.flags.insert(TriggerFlags::ENABLED);
-        } else {
-            self.flags.remove(TriggerFlags::ENABLED);
-        }
-    }
+impl ModelMatch for Model<TriggerExtra> {
+    type Input = str;
+    // fn enabled(&self) -> bool {
+    //     self.flags.contains(TriggerFlags::ENABLED)
+    // }
 
-    fn keep_evaluating(&self) -> bool {
-        self.flags.contains(TriggerFlags::KEEP_EVALUATING)
-    }
+    // fn set_enabled(&mut self, enabled: bool) {
+    //     if enabled {
+    //         self.flags.insert(TriggerFlags::ENABLED);
+    //     } else {
+    //         self.flags.remove(TriggerFlags::ENABLED);
+    //     }
+    // }
 
-    fn set_keep_evaluating(&mut self, keep_evaluating: bool) {
-        if keep_evaluating {
-            self.flags.insert(TriggerFlags::KEEP_EVALUATING);
-        } else {
-            self.flags.remove(TriggerFlags::KEEP_EVALUATING);
-        }
-    }
+    // fn keep_evaluating(&self) -> bool {
+    //     self.flags.contains(TriggerFlags::KEEP_EVALUATING)
+    // }
 
-    fn is_match(&self, input: &Self::Input) -> bool {
-        true
+    // fn set_keep_evaluating(&mut self, keep_evaluating: bool) {
+    //     if keep_evaluating {
+    //         self.flags.insert(TriggerFlags::KEEP_EVALUATING);
+    //     } else {
+    //         self.flags.remove(TriggerFlags::KEEP_EVALUATING);
+    //     }
+    // }
+
+    fn is_match(&self, input: &str) -> bool {
+        self.re.is_match(input)
     }
 }
 
@@ -169,33 +171,26 @@ mod tests {
     #[test]
     fn test_trigger_match() {
         let input = "你一觉醒来觉得精力充沛。";
-        let tr = TriggerModel {
-            name: "t1".into(),
-            pattern: "^你一觉醒来.*".into(),
-            group: "default".into(),
-            extra: TriggerExtra::new(),
-        }
-        .compile()
-        .unwrap();
+        let tr = Trigger::builder()
+            .name("t1")
+            .pattern("^你一觉醒来.*").unwrap()
+            .group("default")
+            .build();
         assert!(tr.is_match(input));
-        let tr = TriggerModel {
-            name: "t2".into(),
-            pattern: "^(.*)一觉(.*)来.*".into(),
-            group: "default".into(),
-            extra: TriggerExtra::new(),
-        }
-        .compile()
-        .unwrap();
+        let tr = Trigger::builder()
+            .name("t2")
+            .pattern("^(.*)一觉(.*)来.*").unwrap()
+            .group("default")
+            .extra(TriggerExtra::new())
+            .build();
         assert!(tr.is_match(input));
         let input = "100/200\n300/400";
-        let tr = TriggerModel {
-            name: "t3".into(),
-            pattern: "^(\\d+)/\\d+\n(\\d+)/\\d+$".into(),
-            group: "default".into(),
-            extra: TriggerExtra::new(),
-        }
-        .compile()
-        .unwrap();
+        let tr = Trigger::builder()
+            .name("t3")
+            .pattern("^(\\d+)/\\d+\n(\\d+)/\\d+$").unwrap()
+            .group("default")
+            .extra(TriggerExtra::new())
+            .build();
         assert!(tr.is_match(input));
     }
 }

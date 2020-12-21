@@ -2,7 +2,6 @@ use crate::map::node::Node;
 use rusqlite::{Result, Row};
 use mlua::{Lua, ToLua, Value};
 use mlua::Result as LuaResult;
-use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Room {

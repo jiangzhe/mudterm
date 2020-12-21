@@ -1,42 +1,33 @@
-use crate::error::Result;
-use crate::runtime::model::{MapModelStore, Model, ModelExec, ModelExtra};
+use crate::runtime::model::{MapModelStore, Model, ModelMatch};
 use bitflags::bitflags;
-use regex::Regex;
 
 pub type Aliases = MapModelStore<Alias>;
 
-pub type Alias = ModelExec<AliasModel>;
+pub type Alias = Model<AliasFlags>;
 
-pub type AliasModel = Model<AliasFlags>;
-
-impl Model<AliasFlags> {
-    pub fn compile(self) -> Result<Alias> {
-        let re = Regex::new(&self.pattern)?;
-        Ok(ModelExec::new(self, re))
+impl ModelMatch for Model<AliasFlags> {
+    type Input = str;
+    fn is_match(&self, input: &str) -> bool {
+        self.re.is_match(input)
     }
 }
 
 bitflags! {
     pub struct AliasFlags: u16 {
-        const ENABLED = 0x0001;
+        // const ENABLED = 0x0001;
         // todo: 实现嵌套别名
         const KEEP_EVALUATING = 0x0008;
     }
 }
 
-impl ModelExtra for AliasFlags {
-    fn enabled(&self) -> bool {
-        self.contains(AliasFlags::ENABLED)
+impl Default for AliasFlags {
+    fn default() -> Self {
+        Self::empty()
     }
+}
 
-    fn set_enabled(&mut self, enabled: bool) {
-        if enabled {
-            self.insert(AliasFlags::ENABLED);
-        } else {
-            self.remove(AliasFlags::ENABLED);
-        }
-    }
-
+impl AliasFlags {
+    
     fn keep_evaluating(&self) -> bool {
         self.contains(AliasFlags::KEEP_EVALUATING)
     }
@@ -50,18 +41,7 @@ impl ModelExtra for AliasFlags {
     }
 }
 
-impl AliasModel {
-    pub fn enabled(&self) -> bool {
-        self.extra.contains(AliasFlags::ENABLED)
-    }
-
-    pub fn set_enabled(&mut self, enabled: bool) {
-        if enabled {
-            self.extra.insert(AliasFlags::ENABLED);
-        } else {
-            self.extra.remove(AliasFlags::ENABLED);
-        }
-    }
+impl Alias {
 
     pub fn keep_evaluating(&self) -> bool {
         self.extra.contains(AliasFlags::KEEP_EVALUATING)

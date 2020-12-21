@@ -1,10 +1,10 @@
 use crate::codec::Codec;
 use crate::error::{Error, Result};
-use crate::runtime::alias::{AliasFlags, AliasModel};
+use crate::runtime::alias::{AliasFlags, Alias};
 use crate::runtime::engine;
 use crate::runtime::engine::EngineAction;
 use crate::runtime::queue::ActionQueue;
-use crate::runtime::trigger::{TriggerExtra, TriggerFlags, TriggerModel};
+use crate::runtime::trigger::{TriggerExtra, TriggerFlags, Trigger};
 use crate::runtime::timer::{TimerModel, TimerFlags};
 use crate::runtime::vars::Variables;
 use crate::map::plan::Planner;
@@ -152,18 +152,17 @@ pub fn init_lua(lua: &Lua, vtb: &Variables, tmpq: &ActionQueue) -> Result<()> {
                     &name
                 ))));
             }
-            let model = AliasModel {
-                name,
-                group,
-                pattern,
-                extra: flags,
-            };
-            let alias = model.compile().map_err(|e| mlua::Error::external(e))?;
+            let alias = Alias::builder()
+                .name(name)
+                .group(group)
+                .pattern(pattern)?
+                .extra(flags)
+                .build();
             // 此处可以直接向Lua表中添加回调，因为：
             // 1. mlua::Function与Lua运行时同生命周期，不能在EventQueue中传递
             // 2. 需保证在下次检验名称时若重名则失败
             // 重要：在处理RuntimAction时，需清理曾添加的回调函数
-            alias_callbacks.set(alias.model.name.to_owned(), func)?;
+            alias_callbacks.set(alias.name.to_owned(), func)?;
             queue.push(EngineAction::CreateAlias(alias));
             Ok(())
         },
@@ -223,15 +222,14 @@ pub fn init_lua(lua: &Lua, vtb: &Variables, tmpq: &ActionQueue) -> Result<()> {
                     &name
                 ))));
             }
-            let model = TriggerModel {
-                name,
-                group,
-                pattern,
-                extra: TriggerExtra { match_lines, flags },
-            };
-            let trigger = model.compile().map_err(|e| mlua::Error::external(e))?;
+            let trigger = Trigger::builder()
+                .name(name)
+                .group(group)
+                .pattern(pattern)?
+                .extra(TriggerExtra { match_lines, flags })
+                .build();
             // 同alias
-            trigger_callbacks.set(trigger.model.name.to_owned(), func)?;
+            trigger_callbacks.set(trigger.name.to_owned(), func)?;
             queue.push(EngineAction::CreateTrigger(trigger));
             Ok(())
         },
