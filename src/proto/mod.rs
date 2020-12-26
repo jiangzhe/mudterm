@@ -6,6 +6,7 @@ use crate::ui::span::Span;
 use crate::ui::style::{Style, Modifier};
 use ansi::apply_sgr;
 use mxp::{Tokenizer, Token, Tokenization, Mode};
+use mlua::{Lua, ToLua, Value};
 
 /// 精简后的MXP标签，主要用于MXP触发器
 #[derive(Debug, Clone, PartialEq)]
@@ -22,6 +23,57 @@ pub enum Label {
     S{
         href: String,
         hint: String,
+    }
+}
+
+impl<'lua> ToLua<'lua> for &Label {
+    fn to_lua(self, lua: &'lua Lua) -> mlua::Result<Value<'lua>> {
+        let tb = match self {
+            Label::None => return Ok(Value::Nil),
+            Label::H(n) => {
+                let table = lua.create_table()?;
+                table.set("type", format!("h{}", n))?;
+                table
+            }
+            Label::A{href, hint} => {
+                let table = lua.create_table()?;
+                table.set("type", "a")?;
+                table.set("href", &href[..])?;
+                table.set("hint", &hint[..])?;
+                table
+            }
+            Label::S{href, hint} => {
+                let table = lua.create_table()?;
+                table.set("type", "send")?;
+                table.set("href", &href[..])?;
+                table.set("hint", &hint[..])?;
+                table
+            }
+        };
+        Ok(Value::Table(tb))
+    }
+}
+
+impl<'lua> ToLua<'lua> for Label {
+    fn to_lua(self, lua: &'lua Lua) -> mlua::Result<Value<'lua>> {
+        ToLua::to_lua(&self, lua)
+    }
+}
+
+impl Label {
+
+    pub fn ty(&self) -> &'static str {
+        match self {
+            Label::A{..} => "a",
+            Label::S{..} => "send",
+            Label::H(1) => "h1",
+            Label::H(2) => "h2",
+            Label::H(3) => "h3",
+            Label::H(4) => "h4",
+            Label::H(5) => "h5",
+            Label::H(6) => "h6",
+            _=> "none",
+        }
     }
 }
 
@@ -129,7 +181,51 @@ pub enum Element {
     MxpImg(String),
 }
 
+impl<'lua> ToLua<'lua> for &Element {
+    fn to_lua(self, lua: &'lua Lua) -> mlua::Result<Value<'lua>> {
+        let table = lua.create_table()?;
+        table.set("type", self.ty())?;
+        match self {
+            Element::Span(span) => {
+                let stb = lua.create_table()?;
+                // 这里不传递style
+                stb.set("content", &span.content[..])?;
+                stb.set("label", ToLua::to_lua(&span.label, lua)?)?;
+                table.set("span", stb)?;
+            }
+            Element::MxpMode(Mode::Open) => {
+                table.set("mode", "open")?;
+            }
+            Element::MxpMode(Mode::Secure) => {
+                table.set("mode", "secure")?;
+            }
+            Element::MxpImg(src) => {
+                table.set("src", &src[..])?;
+            }
+            Element::MxpSupport | Element::MxpVersion | Element::None => (),
+        }
+        Ok(Value::Table(table))
+    }
+}
+
+impl<'lua> ToLua<'lua> for Element {
+    fn to_lua(self, lua: &'lua Lua) -> mlua::Result<Value<'lua>> {
+        ToLua::to_lua(&self, lua)
+    }
+}
+
 impl Element {
+
+    pub fn ty(&self) -> &'static str {
+        match self {
+            Element::None => "none",
+            Element::Span(_) => "span",
+            Element::MxpSupport => "support",
+            Element::MxpVersion => "version",
+            Element::MxpMode(_) => "mode",
+            Element::MxpImg(_) => "img",
+        }
+    }
 
     pub fn is_span(&self) -> bool {
         match self {

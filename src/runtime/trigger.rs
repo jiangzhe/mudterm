@@ -42,30 +42,9 @@ impl Trigger {
     }
 }
 
-// pub type TriggerModel = Model<TriggerExtra>;
-
-// impl TriggerModel {
-//     pub fn compile(self) -> Result<Trigger> {
-//         let pattern = if self.extra.match_lines > 1 {
-//             if self.pattern.starts_with("(?m)") {
-//                 Cow::Borrowed(&self.pattern[..])
-//             } else {
-//                 let mut s = String::new();
-//                 s.push_str("(?m)");
-//                 s.push_str(&self.pattern);
-//                 Cow::Owned(s)
-//             }
-//         } else {
-//             Cow::Borrowed(&self.pattern[..])
-//         };
-//         let re = Regex::new(&pattern)?;
-//         Ok(Trigger::new(self, re))
-//     }
-// }
-
 bitflags! {
     pub struct TriggerFlags: u16 {
-        const ENABLED = 0x0001;
+        // const ENABLED = 0x0001;
         // const OmitFromLog = 0x0002;
         // const OmitFromOutput = 0x0004;
         const KEEP_EVALUATING = 0x0008;
@@ -93,29 +72,6 @@ impl Default for TriggerExtra {
 
 impl ModelMatch for Model<TriggerExtra> {
     type Input = str;
-    // fn enabled(&self) -> bool {
-    //     self.flags.contains(TriggerFlags::ENABLED)
-    // }
-
-    // fn set_enabled(&mut self, enabled: bool) {
-    //     if enabled {
-    //         self.flags.insert(TriggerFlags::ENABLED);
-    //     } else {
-    //         self.flags.remove(TriggerFlags::ENABLED);
-    //     }
-    // }
-
-    // fn keep_evaluating(&self) -> bool {
-    //     self.flags.contains(TriggerFlags::KEEP_EVALUATING)
-    // }
-
-    // fn set_keep_evaluating(&mut self, keep_evaluating: bool) {
-    //     if keep_evaluating {
-    //         self.flags.insert(TriggerFlags::KEEP_EVALUATING);
-    //     } else {
-    //         self.flags.remove(TriggerFlags::KEEP_EVALUATING);
-    //     }
-    // }
 
     fn is_match(&self, input: &str) -> bool {
         self.re.is_match(input)
@@ -123,13 +79,6 @@ impl ModelMatch for Model<TriggerExtra> {
 }
 
 impl TriggerExtra {
-    fn new() -> Self {
-        Self {
-            match_lines: 1,
-            flags: TriggerFlags::empty(),
-        }
-    }
-
     pub fn one_shot(&self) -> bool {
         self.flags.contains(TriggerFlags::ONESHOT)
     }
@@ -181,7 +130,7 @@ mod tests {
             .name("t2")
             .pattern("^(.*)一觉(.*)来.*").unwrap()
             .group("default")
-            .extra(TriggerExtra::new())
+            .extra(TriggerExtra::default())
             .build();
         assert!(tr.is_match(input));
         let input = "100/200\n300/400";
@@ -189,7 +138,7 @@ mod tests {
             .name("t3")
             .pattern("^(\\d+)/\\d+\n(\\d+)/\\d+$").unwrap()
             .group("default")
-            .extra(TriggerExtra::new())
+            .extra(TriggerExtra::default())
             .build();
         assert!(tr.is_match(input));
     }

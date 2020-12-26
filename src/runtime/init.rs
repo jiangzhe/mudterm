@@ -6,6 +6,7 @@ use crate::runtime::engine::EngineAction;
 use crate::runtime::queue::ActionQueue;
 use crate::runtime::trigger::{TriggerExtra, TriggerFlags, Trigger};
 use crate::runtime::timer::{TimerModel, TimerFlags};
+use crate::runtime::mxp_trigger::{MxpTriggerExtra, MxpTrigger};
 use crate::runtime::vars::Variables;
 use crate::map::plan::Planner;
 use crate::map::node::{NodeMap, FilteredNodes};
@@ -113,7 +114,7 @@ pub fn init_lua(lua: &Lua, vtb: &Variables, tmpq: &ActionQueue) -> Result<()> {
 
     // 别名常量
     let alias_flag: mlua::Table = lua.create_table()?;
-    alias_flag.set("Enabled", 1)?;
+    // alias_flag.set("Enabled", 1)?;
     alias_flag.set("KeepEvaluating", 8)?;
     globals.set("alias_flag", alias_flag)?;
 
@@ -152,10 +153,12 @@ pub fn init_lua(lua: &Lua, vtb: &Variables, tmpq: &ActionQueue) -> Result<()> {
                     &name
                 ))));
             }
-            let alias = Alias::builder()
+            let builder = Alias::builder();
+            let alias = builder
                 .name(name)
                 .group(group)
                 .pattern(pattern)?
+                .enabled(true)
                 .extra(flags)
                 .build();
             // 此处可以直接向Lua表中添加回调，因为：
@@ -180,7 +183,7 @@ pub fn init_lua(lua: &Lua, vtb: &Variables, tmpq: &ActionQueue) -> Result<()> {
 
     // 触发器常量
     let trigger_flag: mlua::Table = lua.create_table()?;
-    trigger_flag.set("Enabled", 1)?;
+    // trigger_flag.set("Enabled", 1)?;
     trigger_flag.set("KeepEvaluating", 8)?;
     trigger_flag.set("OneShot", 32768)?;
     globals.set("trigger_flag", trigger_flag)?;
@@ -226,6 +229,7 @@ pub fn init_lua(lua: &Lua, vtb: &Variables, tmpq: &ActionQueue) -> Result<()> {
                 .name(name)
                 .group(group)
                 .pattern(pattern)?
+                .enabled(true)
                 .extra(TriggerExtra { match_lines, flags })
                 .build();
             // 同alias
@@ -254,9 +258,79 @@ pub fn init_lua(lua: &Lua, vtb: &Variables, tmpq: &ActionQueue) -> Result<()> {
     })?;
     register_function(&globals, "EnableTriggerGroup", enable_trigger_group)?;
 
+    // MXP触发器回调注册表
+    let mxp_trigger_callbacks = lua.create_table()?;
+    globals.set(engine::GLOBAL_MXP_TRIGGER_CALLBACKS, mxp_trigger_callbacks)?;
+
+    // 初始化CreateMxpTrigger函数
+    let queue = tmpq.clone();
+    let create_mxp_trigger = lua.create_function(
+        move |lua,
+              (name, group, pattern, flags, label, func): (
+            String,
+            String,
+            String,
+            u16,
+            String,
+            mlua::Function,
+        )| {
+            log::trace!("CreateMxpTrigger function called");
+            if pattern.is_empty() {
+                return Err(mlua::Error::external(Error::RuntimeError(
+                    "empty pattern not allowed when creating MXP trigger".to_owned(),
+                )));
+            }
+            let flags = TriggerFlags::from_bits(flags).ok_or_else(|| {
+                mlua::Error::external(Error::RuntimeError(format!(
+                    "invalid MXP trigger flags {}",
+                    flags
+                )))
+            })?;
+
+            let callbacks: mlua::Table =
+                lua.globals().get(engine::GLOBAL_MXP_TRIGGER_CALLBACKS)?;
+            if callbacks.contains_key(name.to_owned())? {
+                return Err(mlua::Error::external(Error::RuntimeError(format!(
+                    "trigger callback '{}' already exists",
+                    &name
+                ))));
+            }
+            let trigger = MxpTrigger::builder()
+                .name(name)
+                .group(group)
+                .pattern(pattern)?
+                .enabled(true)
+                .extra(MxpTriggerExtra { label, flags })
+                .build();
+            // 同alias
+            callbacks.set(trigger.name.to_owned(), func)?;
+            queue.push(EngineAction::CreateMxpTrigger(trigger));
+            Ok(())
+        },
+    )?;
+    register_function(&globals, "CreateMxpTrigger", create_mxp_trigger)?;
+
+    // 初始化DeleteMxpTrigger函数
+    let queue = tmpq.clone();
+    let delete_mxp_trigger = lua.create_function(move |_, name: String| {
+        log::trace!("DeleteMxpTrigger function called");
+        queue.push(EngineAction::DeleteMxpTrigger(name));
+        Ok(())
+    })?;
+    register_function(&globals, "DeleteMxpTrigger", delete_mxp_trigger)?;
+
+    // 初始化EnableMxpTriggerGroup函数
+    let queue = tmpq.clone();
+    let enable_mxp_trigger_group = lua.create_function(move |_, (name, enabled): (String, bool)| {
+        log::trace!("EnableMxpTriggerGroup function called");
+        queue.push(EngineAction::EnableMxpTriggerGroup(name, enabled));
+        Ok(())
+    })?;
+    register_function(&globals, "EnableMxpTriggerGroup", enable_mxp_trigger_group)?;
+
     // 定时器常量
     let timer_flag: mlua::Table = lua.create_table()?;
-    timer_flag.set("Enabled", 1)?;
+    // timer_flag.set("Enabled", 1)?;
     timer_flag.set("OneShot", 4)?;
     globals.set("timer_flag", timer_flag)?;
 

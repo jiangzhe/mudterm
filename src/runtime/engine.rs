@@ -6,10 +6,10 @@ use crate::runtime::alias::Alias;
 use crate::runtime::alias::Aliases;
 use crate::runtime::cache::{CacheText, InlineStyle};
 use crate::runtime::init::init_lua;
-use crate::runtime::model::ModelStore;
+use crate::runtime::model::{ModelStore, ModelCaptures};
 use crate::runtime::queue::{ActionQueue, OutputQueue};
-use crate::runtime::trigger::Trigger;
-use crate::runtime::trigger::Triggers;
+use crate::runtime::trigger::{Triggers, Trigger};
+use crate::runtime::mxp_trigger::{MxpTriggers, MxpTrigger};
 use crate::runtime::vars::Variables;
 use crate::runtime::RuntimeOutput;
 use crate::runtime::delay_queue::{Delay, Delayed};
@@ -22,11 +22,14 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::thread::{self, JoinHandle};
 use crossbeam_channel::Sender;
+use mlua::ToLua;
 
 // 别名回调存储于Lua脚本引擎的全局变量表中
 pub(crate) const GLOBAL_ALIAS_CALLBACKS: &str = "_global_alias_callbacks";
 // 触发器回调存储于Lua脚本引擎的全局变量表中
 pub(crate) const GLOBAL_TRIGGER_CALLBACKS: &str = "_global_trigger_callbacks";
+// MXP触发器回调存储于Lua脚本引擎的全局变量表中
+pub(crate) const GLOBAL_MXP_TRIGGER_CALLBACKS: &str = "_global_mxp_trigger_callbacks";
 // 计时器回调存储于Lua脚本引擎的全局变量表中
 pub(crate) const GLOBAL_TIMER_CALLBACKS: &str = "_global_timer_callbacks";
 
@@ -44,6 +47,9 @@ pub enum EngineAction {
     DeleteTimer(String),
     ExecuteTimer(Delay<Timer>),
     EnableTimerGroup(String, bool),
+    CreateMxpTrigger(MxpTrigger),
+    DeleteMxpTrigger(String),
+    EnableMxpTriggerGroup(String, bool),
     LoadFile(String),
     // ExecuteUserCmd(String),
     // ExecuteUserScript(String),
@@ -67,6 +73,8 @@ pub struct Engine {
     cache: CacheText,
     aliases: Aliases,
     triggers: Triggers,
+    // mxp triggers
+    mxp_triggers: MxpTriggers,
     timers: Timers,
     cmd_delim: char,
     send_empty_cmd: bool,
@@ -88,6 +96,7 @@ impl Engine {
             cache: CacheText::new(5, 10),
             aliases: Aliases::new(),
             triggers: Triggers::new(),
+            mxp_triggers: MxpTriggers::new(),
             timers: Timers::new(),
             cmd_delim: config.runtime.cmd_delim,
             send_empty_cmd: config.runtime.send_empty_cmd,
@@ -198,6 +207,29 @@ impl Engine {
             EngineAction::EnableTriggerGroup(group, enabled) => {
                 if let Err(e) = self.enable_trigger_group(&group, enabled) {
                     log::warn!("enable trigger group error {}", e);
+                }
+            }
+            EngineAction::CreateMxpTrigger(trigger) => {
+                let name = trigger.name.to_owned();
+                if let Err(trigger) = self.create_mxp_trigger(trigger) {
+                    let err_lines = Lines::fmt_err(format!("创建MXP触发器失败：{:?}", trigger));
+                    for err_line in err_lines.into_vec() {
+                        self.tmpq.push(EngineAction::SendLineToUI(err_line, None));
+                    }
+                    // 注销回调函数，忽略错误
+                    if let Err(e) = self.delete_mxp_trigger_callback(&name) {
+                        log::warn!("delete trigger callback error {}", e);
+                    }
+                }
+            }
+            EngineAction::DeleteMxpTrigger(name) => {
+                if let Err(e) = self.delete_mxp_trigger(&name) {
+                    log::warn!("delete MXP trigger error {}", e);
+                }
+            }
+            EngineAction::EnableMxpTriggerGroup(group, enabled) => {
+                if let Err(e) = self.enable_mxp_trigger_group(&group, enabled) {
+                    log::warn!("enable MXP trigger group error {}", e);
                 }
             }
             EngineAction::CreateTimer(tm) => {
@@ -345,8 +377,8 @@ impl Engine {
 
     /// 删除触发器回调
     fn delete_trigger_callback(&mut self, name: &str) -> Result<()> {
-        let trigger_callbacks: mlua::Table = self.lua.globals().get(GLOBAL_TRIGGER_CALLBACKS)?;
-        trigger_callbacks.set(name, mlua::Value::Nil)?;
+        let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_TRIGGER_CALLBACKS)?;
+        callbacks.set(name, mlua::Value::Nil)?;
         Ok(())
     }
 
@@ -363,6 +395,52 @@ impl Engine {
         log::debug!("Enabling trigger group {}, enabled={}", group, enabled);
         let n = self.triggers.enable_group(group, enabled);
         log::trace!("{} triggers effected", n);
+        Ok(())
+    }
+
+    // 执行MXP触发器
+    fn exec_mxp_trigger(&self, trigger: &MxpTrigger, elem: &Element) -> Result<()> {
+        log::debug!("Executing MXP trigger {}", trigger.name);
+        log::trace!("matched event={:?}", elem);
+        let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_MXP_TRIGGER_CALLBACKS)?;
+        let func: mlua::Function = callbacks.get(&trigger.name[..])?;
+        let wildcards = if let Some(span) = elem.as_span() {
+            trigger.captures(&span.content)?
+        } else {
+            ModelCaptures::default()
+        };
+        let value = elem.to_lua(&self.lua)?;
+        func.call((trigger.name.to_owned(), value, wildcards))?;
+        Ok(())
+    }
+
+    /// 创建MXP触发器
+    fn create_mxp_trigger(&mut self, trigger: MxpTrigger) -> std::result::Result<(), MxpTrigger> {
+        log::debug!("Creating MXP trigger {}", trigger.name);
+        log::trace!("trigger={:?}", trigger);
+        self.mxp_triggers.add(trigger)
+    }
+
+    /// 删除MXP触发器回调
+    fn delete_mxp_trigger_callback(&mut self, name: &str) -> Result<()> {
+        let callbacks: mlua::Table = self.lua.globals().get(GLOBAL_MXP_TRIGGER_CALLBACKS)?;
+        callbacks.set(name, mlua::Value::Nil)?;
+        Ok(())
+    }
+
+    /// 删除MXP触发器
+    fn delete_mxp_trigger(&mut self, name: &str) -> Result<()> {
+        log::debug!("Deleting MXP trigger {}", name);
+        self.delete_mxp_trigger_callback(name)?;
+        self.mxp_triggers.remove(name);
+        Ok(())
+    }
+
+    // 启用/禁用MXP触发器组
+    fn enable_mxp_trigger_group(&mut self, group: &str, enabled: bool) -> Result<()> {
+        log::debug!("Enabling MXP trigger group {}, enabled={}", group, enabled);
+        let n = self.mxp_triggers.enable_group(group, enabled);
+        log::trace!("{} MXP triggers effected", n);
         Ok(())
     }
 
@@ -459,10 +537,6 @@ impl Engine {
                 }
             }
         }
-        if !mxp_events.is_empty() {
-            // 记录MXP事件
-            log::debug!("MXP events: {:?}", mxp_events);
-        }
         let styled = Line::new(styled);
         // 添加进文本缓存，供触发器进行匹配
         self.cache.push_line(&styled);
@@ -482,6 +556,27 @@ impl Engine {
             if tr.extra.one_shot() {
                 self.tmpq
                     .push(EngineAction::DeleteTrigger(tr.name.to_owned()));
+            }
+        }
+        if !mxp_events.is_empty() {
+            // 记录MXP事件
+            log::debug!("MXP events: {:?}", mxp_events);
+            // 这里无法保证mxp trigger在同一行执行时的串行化语义
+            for me in mxp_events {
+                let trs = self.mxp_triggers.trigger_all(&me);
+                for tr in trs {
+                    if let Err(e) = self.exec_mxp_trigger(tr, &me) {
+                        let err_lines = Lines::fmt_err(e.to_string());
+                        for err_line in err_lines.into_vec() {
+                            self.tmpq.push(EngineAction::SendLineToUI(err_line, None));
+                        }
+                    }
+                    // 对OneShot MXP触发器进行删除
+                    if tr.extra.one_shot() {
+                        self.tmpq
+                            .push(EngineAction::DeleteMxpTrigger(tr.name.to_owned()));
+                    }
+                }
             }
         }
     }

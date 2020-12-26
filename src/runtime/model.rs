@@ -41,8 +41,12 @@ lazy_static! {
 impl<X: Default> Default for ModelBuilder<X> {
     fn default() -> Self {
         Self{
+            name: String::new(),
+            group: String::new(),
+            pattern: String::new(),
+            enabled: false,
+            extra: X::default(),
             re: EMPTY_REGEX.clone(),
-            ..Default::default()
         }
     }
 }
@@ -143,7 +147,7 @@ impl NumberOrString {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ModelCaptures(HashMap<NumberOrString, String>);
 
 impl<'lua> ToLua<'lua> for ModelCaptures {

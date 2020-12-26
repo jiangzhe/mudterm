@@ -26,21 +26,6 @@ impl Default for AliasFlags {
     }
 }
 
-impl AliasFlags {
-    
-    fn keep_evaluating(&self) -> bool {
-        self.contains(AliasFlags::KEEP_EVALUATING)
-    }
-
-    fn set_keep_evaluating(&mut self, keep_evaluating: bool) {
-        if keep_evaluating {
-            self.insert(AliasFlags::KEEP_EVALUATING);
-        } else {
-            self.remove(AliasFlags::KEEP_EVALUATING);
-        }
-    }
-}
-
 impl Alias {
 
     pub fn keep_evaluating(&self) -> bool {

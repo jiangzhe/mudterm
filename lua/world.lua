@@ -1,8 +1,9 @@
 world = {}
 
 local wrap_trigger_callback = function(callback)
+    local wrapped = coroutine.wrap(callback)
     return function(name, line, wildcards, styles)
-        return coroutine.wrap(callback)(name, line, wildcards, styles)
+        return wrapped(name, line, wildcards, styles)
     end
 end
 
@@ -40,14 +41,14 @@ end
 --       4) styles，文本格式，用于判断文本的颜色和特殊格式，仅支
 --          持单行模式，多行模式下为空。
 function world.create_trigger(args)
-    args.flags = trigger_flag.Enabled
+    args.flags = 0
     create_trigger(args)
 end
 
 -- 创建临时触发器（触发一次后自动删除）
 function world.create_oneshot_trigger(args)
     -- 不使用bitOp库，而直接使用数字相加设置bitflag
-    args.flags = trigger_flag.Enabled + trigger_flag.OneShot
+    args.flags = trigger_flag.OneShot
     create_trigger(args)
 end
 
@@ -67,9 +68,57 @@ function world.enable_trigger_group(group, enabled)
     EnableTriggerGroup(group, enabled)
 end
 
+local wrap_mxp_trigger_callback = function(callback)
+    local wrapped = coroutine.wrap(callback)
+    return function(name, elem, wildcards)
+        return wrapped(name, elem, wildcards)
+    end
+end
+
+local create_mxp_trigger = function(args)
+    assert(args.pattern, "pattern of MXP trigger cannot be empty")
+    assert(type(args.callback) == "function", "callback of MXP trigger must be function")
+    assert(type(args.flags) == "number", "flags of MXP trigger must be number")
+    assert(type(args.label) == "string", "label of MXP trigger must be string")
+    if not args.name then
+        args.name = "trigger-" .. GetUniqueID()
+    end
+    if not args.group then
+        args.group = "default"
+    end
+
+    local callback = wrap_mxp_trigger_callback(args.callback)
+    CreateMxpTrigger(args.name, args.group, args.pattern, args.flags, args.label, callback)
+end
+
+-- 创建MXP触发器
+function world.create_mxp_trigger(args)
+    args.flags = 0
+    create_mxp_trigger(args)
+end
+
+-- 创建MXP临时触发器（触发一次后自动删除）
+function world.create_oneshot_mxp_trigger(args)
+    args.flags = trigger_flag.OneShot
+    create_mxp_trigger(args)
+end
+
+-- 删除MXP触发器
+function world.delete_mxp_trigger(name)
+    assert(name, "name of trigger cannot be empty")
+    DeleteMxpTrigger(name)
+end
+
+-- 开启/禁用MXP触发器组
+function world.enable_mxp_trigger_group(group, enabled)
+    enabled = enabled or true
+    EnableMxpTriggerGroup(group, enabled)
+end
+
 local wrap_alias_callback = function(callback)
+    local wrapped = coroutine.wrap(callback)
     return function(name, line, wildcards)
-        return coroutine.wrap(callback)(name, line, wildcards)
+        return wrapped(name, line, wildcards)
     end
 end
 
@@ -100,7 +149,7 @@ end
 --       3) wildcards，正则捕获序列，实现为lua table，可使用数字
 --          或字符串下标进行取值。
 function world.create_alias(args)
-    args.flags = alias_flag.Enabled
+    args.flags = 0
     create_alias(args)
 end
 
@@ -121,9 +170,7 @@ function world.enable_alias_group(group, enabled)
 end
 
 local wrap_timer_callback = function(callback)
-    return function()
-        return coroutine.wrap(callback)()
-    end
+    return coroutine.wrap(callback)
 end
 
 local create_timer = function(args)
@@ -154,14 +201,14 @@ end
 function world.create_timer(args)
     assert(type(args.tick_time) == "number", "tick time of timer must be number")
     args.tick_in_millis = args.tick_time * 1000
-    args.flags = timer_flag.Enabled
+    args.flags = 0
     create_timer(args)
 end
 
 function world.create_oneshot_timer(args)
     assert(type(args.tick_time) == "number", "tick time of timer must be number")
     args.tick_in_millis = args.tick_time * 1000
-    args.flags = timer_flag.Enabled + timer_flag.OneShot
+    args.flags = timer_flag.OneShot
     create_timer(args)
 end
 
